@@ -1,0 +1,8 @@
+*.csv
+*.nc
+*.png
+*.pdf
+*.jpg
+data/raw
+data/processed
+data/interim
