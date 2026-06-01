@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peatfire"
+version = "0.1.0"
+description = "Wildfire risk evaluation in North Carolina peatlands"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "xarray",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
