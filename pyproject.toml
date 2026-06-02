@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nc-peatland-fire"
+version = "0.1.0"
+description = "Wildfire risk and peatland restoration analysis for North Carolina peatlands."
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+]
+
+# The importable package is the `src/` directory itself (imported as `import src`),
+# so we declare it explicitly rather than relying on auto-discovery, which treats
+# a top-level `src/` as a src-layout root.
+[tool.setuptools]
+packages = ["src"]
