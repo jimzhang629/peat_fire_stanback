@@ -1,0 +1,19 @@
+# environment.yml
+name: peat_fire_stanback
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - geopandas
+  - pyogrio
+  - pyproj
+  - shapely
+  - fiona
+  - rasterio
+  - rioxarray
+  - xarray
+  - libgdal-hdf4   # <-- required to read MODIS MCD64A1 HDF4 files
+  - earthaccess
+  - pandas
+  - jupyterlab
+  - ipykernel
