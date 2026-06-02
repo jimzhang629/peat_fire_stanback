@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nc-peatland-fire"
+name = "peat-fire-stanback"
 version = "0.1.0"
 description = "Wildfire risk and peatland restoration analysis for North Carolina peatlands."
 requires-python = ">=3.9"
