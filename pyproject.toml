@@ -11,8 +11,8 @@ dependencies = [
     "pandas",
 ]
 
-# The importable package is the `src/` directory itself (imported as `import src`),
-# so we declare it explicitly rather than relying on auto-discovery, which treats
-# a top-level `src/` as a src-layout root.
-[tool.setuptools]
-packages = ["src"]
+# Conventional "src layout": the importable package is `peatfire`, which lives
+# in src/peatfire/. setuptools discovers it under src/ and exposes it as
+# `import peatfire` (the src/ directory itself is not importable).
+[tool.setuptools.packages.find]
+where = ["src"]
