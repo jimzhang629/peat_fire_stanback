@@ -4,14 +4,14 @@ This project evaluates wildfire risk in North Carolina peatlands and quantifies 
 ## Layout
 
 ```
-src/   importable package (data_loading helpers live here)
-data/           raw/, interim/, processed/ (contents git-ignored)
-notebooks/      analysis notebooks; see example.ipynb
+src/peatfire/    importable `peatfire` package (data_loading helpers live here)
+data/            raw/, interim/, processed/ (contents git-ignored)
+notebooks/       analysis notebooks; see example.ipynb
 ```
 
 ## Setup
 
-Install the project once as an editable package. This puts `src` on the
+Install the project once as an editable package. This puts `peatfire` on the
 Python path so notebooks (and scripts/tests) can import it from anywhere,
 without `sys.path` hacks or having to launch Jupyter from the repo root:
 
@@ -19,13 +19,16 @@ without `sys.path` hacks or having to launch Jupyter from the repo root:
 pip install -e .
 ```
 
-## Importing from `src` and loading data
+If you have an old install of this project, uninstall it first so the import
+name updates cleanly: `pip uninstall peat-fire-stanback nc-peatland-fire`.
+
+## Importing from `peatfire` and loading data
 
 After the editable install, import the package and its data helpers from any
 notebook regardless of where Jupyter was started:
 
 ```python
-from src import data_path, load_csv
+from peatfire import data_path, load_csv
 
 # Build an absolute path into the data/ folder (resolved relative to the repo
 # root, never the current working directory):
