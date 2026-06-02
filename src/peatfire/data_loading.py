@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pandas as pd
 
-# This file lives at <root>/src/data_loading.py, so the project root is two
-# levels up.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# This file lives at <root>/src/peatfire/data_loading.py, so the project
+# root is three levels up.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 
 
