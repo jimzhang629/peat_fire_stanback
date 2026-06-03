@@ -97,7 +97,8 @@ def clip_gdf_to_mask(gdf_path, mask, out_path):
     '''
     gdf = gpd.read_file(gdf_path)
     gdf_crs = gdf.crs
-    mask_in_gdf_crs = mask.to_crs(gdf_crs)
+    mask_in_gdf_crs = mask.to_crs(gdf_crs).dissolve()
     gdf_clipped = gpd.sjoin(gdf, mask_in_gdf_crs[['geometry']], predicate='within').drop(columns='index_right')
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     gdf_clipped.to_file(out_path, driver='GPKG')
     return gdf_clipped
