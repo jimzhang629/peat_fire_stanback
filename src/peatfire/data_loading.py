@@ -7,8 +7,8 @@ from a notebook in ``notebooks/``, a script, or a test.
 
 import os
 from pathlib import Path
-
 import pandas as pd
+import geopandas as gpd
 
 # This file lives at <root>/src/peatfire/data_loading.py, so the project
 # root is three levels up.
@@ -54,7 +54,6 @@ def get_key(name: str) -> str:
         )
     return value
 
-
 def data_path(*parts: str) -> Path:
     """Return an absolute path inside the ``data/`` directory.
 
@@ -77,3 +76,28 @@ def load_csv(*parts: str, **kwargs) -> pd.DataFrame:
     >>> df = load_csv("raw", "fires.csv")
     """
     return pd.read_csv(data_path(*parts), **kwargs)
+
+def clip_gdf_to_mask(gdf_path, mask, out_path):
+    '''
+    Clips a data GeoDataFrame to a mask GeoDataFrame (like nc bounds)
+    
+    Parameters
+    ----------
+    gdf_path : Path
+        The path to your data GeoDataFrame
+    mask : GeoDataFrame
+        Your clipping mask GeoDataFrame
+    out_path : Path
+        The path to where you want to save the clipped GeoDataFrame
+    
+    Returns
+    -------
+    gdf_clipped : GeoDataFrame
+        Your GeoDataFrame clipped to your mask
+    '''
+    gdf = gpd.read_file(gdf_path)
+    gdf_crs = gdf.crs
+    mask_in_gdf_crs = mask.to_crs(gdf_crs)
+    gdf_clipped = gpd.sjoin(gdf, mask_in_gdf_crs[['geometry']], predicate='within').drop(columns='index_right')
+    gdf_clipped.to_file(out_path, driver='GPKG')
+    return gdf_clipped
