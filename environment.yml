@@ -16,5 +16,7 @@ dependencies:
   - earthaccess
   - python-dotenv
   - pandas
+  - numpy
+  - matplotlib   # <-- plotting (time series, heatmaps, overlay maps)
   - jupyterlab
   - ipykernel
