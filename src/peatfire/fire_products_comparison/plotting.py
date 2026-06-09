@@ -14,7 +14,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Patch
 
 from .fire_comparison import rmse, total_least_squares
@@ -304,4 +304,76 @@ def plot_overlay_map(
         ],
         loc="lower left",
     )
+    return fig
+
+
+def plot_consensus_map(
+    masks: dict,
+    aoi_gdf,
+    year: int,
+    month: Optional[int] = None,
+    cmap: str = "viridis",
+    ax: Optional[plt.Axes] = None,
+):
+    """Multi-product burned-area overlay: colour each cell by how many products burned it.
+
+    The N-product generalisation of :func:`plot_overlay_map`. ``masks`` is a
+    common-grid stack (name -> binary DataArray) from
+    :func:`peatfire.fire_products_comparison.stack_on_common_grid`, so every
+    product is already aligned to the same EPSG:5070 grid. Burned cells are
+    coloured 1..N by the number of products that map a burn there (1 = a single
+    product, N = unanimous); unburned cells (count 0) are transparent. The AOI
+    boundary is drawn on top.
+
+    Reads "where do products agree?": darker/fringe cells are mapped by only one
+    product, the brightest cells are the consensus core all products share.
+    """
+    set_fire_style()
+    names = [n for n in masks if masks[n] is not None]
+    if not names:
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(11, 5))
+        else:
+            fig = ax.figure
+        ax.text(0.5, 0.5, "no products for this period", ha="center", va="center")
+        return fig
+
+    # masks share the common grid, so they stack cell-for-cell.
+    count = np.sum(
+        [(masks[n].values > 0).astype("int16") for n in names], axis=0
+    )
+    n_products = len(names)
+    count_ma = np.ma.masked_where(count == 0, count)
+
+    ref = masks[names[0]]
+    left, bottom, right, top = ref.rio.bounds()
+
+    # one discrete colour per agreement level 1..N, with integer colourbar ticks.
+    colours = plt.get_cmap(cmap)(np.linspace(0.15, 1.0, n_products))
+    cmap_obj = ListedColormap(colours)
+    norm = BoundaryNorm(np.arange(0.5, n_products + 1.5), cmap_obj.N)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(11, 5))
+    else:
+        fig = ax.figure
+
+    im = ax.imshow(
+        count_ma, extent=[left, right, bottom, top], origin="upper",
+        cmap=cmap_obj, norm=norm, interpolation="nearest",
+    )
+    aoi_gdf.to_crs(ref.rio.crs).boundary.plot(ax=ax, color="black", linewidth=0.8)
+
+    label = f"{year}-{month:02d}" if month else str(year)
+    ax.set_title(
+        f"Burned-area consensus in NC, {label}: {n_products} products "
+        f"({', '.join(names)})"
+    )
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    cbar = fig.colorbar(
+        im, ax=ax, ticks=range(1, n_products + 1), shrink=0.8,
+        boundaries=np.arange(0.5, n_products + 1.5),
+    )
+    cbar.set_label("Number of products mapping burn")
     return fig

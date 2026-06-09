@@ -35,6 +35,7 @@ from .fire_comparison import (
 from .plotting import (
     plot_agreement_heatmap,
     plot_annual_series,
+    plot_consensus_map,
     plot_overlay_map,
     plot_product_scatter,
     plot_temporal_heatmap,
@@ -62,6 +63,7 @@ __all__ = [
     "total_least_squares",
     "plot_agreement_heatmap",
     "plot_annual_series",
+    "plot_consensus_map",
     "plot_overlay_map",
     "plot_product_scatter",
     "plot_temporal_heatmap",
