@@ -11,10 +11,11 @@ import pandas as pd
 import geopandas as gpd
 import rioxarray
 
-# This file lives at <root>/src/peatfire/preproc/data_loading.py, so the project
-# root is four levels up.
+# This file lives at <root>/src/peatfire/preproc/data_loading.py, so the
+# project root is four levels up.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = PROJECT_ROOT / "data"
+
 
 def load_env() -> None:
     """Load secrets from the project's ``.env`` into ``os.environ``.
@@ -80,7 +81,7 @@ def load_csv(*parts: str, **kwargs) -> pd.DataFrame:
 def clip_vector_to_mask(vector_path, mask):
     '''
     Clips vector to a mask GeoDataFrame (like nc bounds)
-    
+
     Parameters
     ----------
     vector_path : Path
@@ -126,7 +127,7 @@ def clip_vector_to_mask_and_save(vector_path, mask, out_path):
 def clip_raster_to_mask(raster_path, mask):
     '''
     Clips a raster (e.g., .tif) to a mask GeoDataFrame (like nc bounds)
-    
+
     Parameters
     ----------
     raster_path : Path
@@ -170,3 +171,27 @@ def clip_raster_to_mask_and_save(raster_path, mask, out_path):
     
     return raster_clipped
 
+def clip_raster_to_mask_and_save(raster_path, mask, out_path):
+    '''
+    Clips a raster (e.g., .tif) to a mask GeoDataFrame (like nc bounds) and saves it to out_path.
+
+    Parameters
+    ----------
+    raster_path : Path
+        The path to your raster data
+    mask : GeoDataFrame
+        Your clipping mask GeoDataFrame
+    out_path : Path
+        The path to where you want to save the clipped raster
+
+    Returns
+    -------
+    raster_clipped : xarray Dataset
+        Your raster data clipped to your mask
+    '''
+
+    raster_clipped = clip_raster_to_mask(raster_path, mask)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    raster_clipped.rio.to_raster(out_path)
+
+    return raster_clipped
