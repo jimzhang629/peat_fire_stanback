@@ -199,9 +199,11 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=250.0,
         temporal="monthly",
-        # inventory: files sit directly in data/processed/fire/, no sub-folder:
-        # firecci51_{YYYY}_{MM}_nc.tif
-        root_parts=("processed", "fire"),
+        # download_and_clip_data.ipynb writes FireCCI51 to a firecci51/ sub-folder:
+        # data/processed/fire/firecci51/firecci51_{YYYY}_{MM}_nc.tif. The inventory
+        # CSV lists the bare data/processed/fire/ path, which does not match the
+        # executed download code -- using the sub-folder the files are actually in.
+        root_parts=("processed", "fire", "firecci51"),
         glob="firecci51_*_nc.tif",
         year_parser=_second_token_year,
         month_parser=_second_token_month,
