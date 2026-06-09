@@ -41,7 +41,13 @@ from affine import Affine
 from rasterio.enums import Resampling
 
 from ..preproc.data_loading import data_path  # noqa: F401  (convenience re-export)
-from .fire_products import get_spec, list_products, load_points, load_standardized
+from .fire_products import (
+    _files_for_period,
+    get_spec,
+    list_products,
+    load_points,
+    load_standardized,
+)
 
 ANALYSIS_CRS = "EPSG:5070"  # NAD83 / CONUS Albers Equal Area
 AOILike = Union[str, Path, gpd.GeoDataFrame]

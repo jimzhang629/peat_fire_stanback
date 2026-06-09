@@ -24,8 +24,10 @@ from .fire_comparison import (
     compare_fire_products,
     period_totals_series,
     product_pair_scatter,
+    rasterize_points_to_grid,
     rmse,
     stack_on_common_grid,
+    to_common_grid,
     total_least_squares,
 )
 from .plotting import (
@@ -51,8 +53,10 @@ __all__ = [
     "compare_fire_products",
     "period_totals_series",
     "product_pair_scatter",
+    "rasterize_points_to_grid",
     "rmse",
     "stack_on_common_grid",
+    "to_common_grid",
     "total_least_squares",
     "plot_agreement_heatmap",
     "plot_annual_series",
