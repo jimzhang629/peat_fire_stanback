@@ -17,6 +17,8 @@ import pandas as pd
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
 
+from .fire_comparison import rmse, total_least_squares
+
 # Okabe-Ito colour-blind-safe qualitative palette.
 OKABE_ITO = [
     "#0072B2",  # blue
@@ -124,6 +126,56 @@ def plot_agreement_heatmap(
     # heatmaps want all four spines
     for s in ax.spines.values():
         s.set_visible(True)
+    return fig
+
+
+def plot_product_scatter(
+    x,
+    y,
+    xlabel: str = "Product X",
+    ylabel: str = "Product Y",
+    title: Optional[str] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """Scatterplot of two products with a total-least-squares fit and y=x line.
+
+    ``x`` and ``y`` are paired per-unit values (e.g. from
+    :func:`peatfire.fire_products_comparison.product_pair_scatter`). Draws the
+    points, the **y = x** reference (perfect agreement), and the **TLS** fit, and
+    annotates the TLS slope/intercept and the RMSE -- the comparison Humber et al.
+    report. Equal aspect so the y=x line reads at 45 degrees.
+    """
+    set_fire_style()
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    else:
+        fig = ax.figure
+
+    if x.size == 0:
+        ax.text(0.5, 0.5, "no overlapping data", ha="center", va="center")
+        return fig
+
+    ax.scatter(x, y, s=8, alpha=0.4, color=OKABE_ITO[0], edgecolor="none")
+    lo = float(min(x.min(), y.min()))
+    hi = float(max(x.max(), y.max()))
+    ax.plot([lo, hi], [lo, hi], ls="--", color="grey", label="y = x")
+
+    slope, intercept = total_least_squares(x, y)
+    if np.isfinite(slope):
+        xs = np.array([lo, hi])
+        ax.plot(
+            xs, slope * xs + intercept, color=OKABE_ITO[3],
+            label=f"TLS: y = {slope:.2f}x + {intercept:.2g}",
+        )
+    err = rmse(x, y)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title or f"RMSE = {err:.3g}")
+    ax.legend(loc="upper left")
+    ax.set_aspect("equal", adjustable="datalim")
     return fig
 
 

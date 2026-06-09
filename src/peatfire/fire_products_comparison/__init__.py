@@ -22,12 +22,17 @@ from .fire_comparison import (
     build_common_grid,
     burned_area_km2,
     compare_fire_products,
+    period_totals_series,
+    product_pair_scatter,
+    rmse,
     stack_on_common_grid,
+    total_least_squares,
 )
 from .plotting import (
     plot_agreement_heatmap,
     plot_annual_series,
     plot_overlay_map,
+    plot_product_scatter,
     set_fire_style,
 )
 
@@ -43,9 +48,14 @@ __all__ = [
     "build_common_grid",
     "burned_area_km2",
     "compare_fire_products",
+    "period_totals_series",
+    "product_pair_scatter",
+    "rmse",
     "stack_on_common_grid",
+    "total_least_squares",
     "plot_agreement_heatmap",
     "plot_annual_series",
     "plot_overlay_map",
+    "plot_product_scatter",
     "set_fire_style",
 ]
