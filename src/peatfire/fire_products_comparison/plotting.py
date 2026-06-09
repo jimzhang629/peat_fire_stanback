@@ -32,7 +32,6 @@ OKABE_ITO = [
 # Categorical colormap for two-product overlay maps (1=A only, 2=B only, 3=both).
 OVERLAY_CMAP = ListedColormap(["#1f77b4", "#d62728", "#7e3f9e"])
 
-
 def set_fire_style() -> None:
     """Apply the project's matplotlib rcParams. Idempotent; call once per session."""
     plt.rcParams.update(
@@ -50,7 +49,6 @@ def set_fire_style() -> None:
             "figure.autolayout": True,
         }
     )
-
 
 def plot_annual_series(
     df: pd.DataFrame,
