@@ -489,32 +489,57 @@ def agreement_matrix(
     binary = method in ("jaccard", "iou", "kappa", "percent_agreement")
 
     if pooling == "years":
-        # one value per product per period (BA km^2, or VIIRS detection count)
+        # one value per product per period (BA km^2, or VIIRS detection count).
+        # Every column spans the full period index (NaN where a product is
+        # absent), so the vectors are equal length and _valid_pair aligns a pair
+        # by dropping periods where either is missing.
         df = period_totals_series(
             products, years, aoi, temporal_unit=temporal_unit,
             common_grid_res=common_grid_res,
         )
         names = [p for p in products if p in df.columns]
         vecs = {p: df[p].values.astype("float64") for p in names}
-    else:
-        # pooling == "cells": concatenate flattened cells across all periods
-        periods = _expand_periods(years, temporal_unit)
-        pooled: dict[str, list[np.ndarray]] = {p: [] for p in products}
-        grid = build_common_grid(aoi, res_m=common_grid_res)
-        for year, month in periods:
-            stack = stack_on_common_grid(
-                products, year, aoi, binary=binary, grid=grid, month=month
-            )
-            for p in products:
-                if p in stack:
-                    pooled[p].append(stack[p].values.astype("float64"))
-        vecs = {p: np.concatenate(arrs) for p, arrs in pooled.items() if arrs}
-        names = [p for p in products if p in vecs]
+        mat = pd.DataFrame(index=names, columns=names, dtype="float64")
+        for a in names:
+            for b in names:
+                mat.loc[a, b] = _ordered_score(vecs[a], vecs[b], method, same=(a == b))
+        return mat
 
+    # pooling == "cells": pool flattened grid cells, but pair-by-pair over only
+    # the periods where BOTH products have data, keeping them cell-aligned. (A
+    # product absent for a period contributes no cells to any pair in that
+    # period, so vectors never go out of length or out of alignment -- e.g.
+    # FireCCIS311 2019+ vs MCD64A1 2001+ are compared only on their shared years.)
+    periods = _expand_periods(years, temporal_unit)
+    grid = build_common_grid(aoi, res_m=common_grid_res)
+    per_period: list[dict[str, np.ndarray]] = []
+    present: list[str] = []
+    for year, month in periods:
+        stack = stack_on_common_grid(
+            products, year, aoi, binary=binary, grid=grid, month=month
+        )
+        per_period.append(
+            {p: stack[p].values.astype("float64").ravel() for p in stack}
+        )
+        for p in stack:
+            if p not in present:
+                present.append(p)
+    names = [p for p in products if p in present]
+
+    empty = np.empty(0)
     mat = pd.DataFrame(index=names, columns=names, dtype="float64")
     for a in names:
         for b in names:
-            mat.loc[a, b] = _ordered_score(vecs[a], vecs[b], method, same=(a == b))
+            if a == b:
+                mat.loc[a, b] = _ordered_score(empty, empty, method, same=True)
+                continue
+            shared = [d for d in per_period if a in d and b in d]
+            if shared:
+                xa = np.concatenate([d[a] for d in shared])
+                yb = np.concatenate([d[b] for d in shared])
+                mat.loc[a, b] = _ordered_score(xa, yb, method, same=False)
+            else:
+                mat.loc[a, b] = np.nan
     return mat
 
 
