@@ -57,6 +57,7 @@ try:  # optional geospatial API
         plot_annual_series,
         plot_overlay_map,
         plot_product_scatter,
+        plot_temporal_heatmap,
         set_fire_style,
     )
 
@@ -81,6 +82,7 @@ try:  # optional geospatial API
         "plot_annual_series",
         "plot_overlay_map",
         "plot_product_scatter",
+        "plot_temporal_heatmap",
         "set_fire_style",
     ]
 except ImportError:
