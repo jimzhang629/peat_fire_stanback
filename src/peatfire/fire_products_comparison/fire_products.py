@@ -187,7 +187,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         # download_and_clip_data.ipynb writes GABAM to RAW (cell output confirms
         # data/raw/fire/gabam/gabam_{YYYY}_nc.tif). The inventory CSV lists a
         # processed path that does not match the executed code -- using raw.
-        root_parts=("raw", "fire", "gabam"),
+        root_parts=("processed", "fire", "gabam"),
         glob="gabam_*_nc.tif",
         year_parser=_gabam_year,
         burn_predicate=lambda da: da == 1,
@@ -201,7 +201,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         temporal="monthly",
         # inventory: files sit directly in data/processed/fire/, no sub-folder:
         # firecci51_{YYYY}_{MM}_nc.tif
-        root_parts=("processed", "fire"),
+        root_parts=("processed", "fire", 'firecci51'),
         glob="firecci51_*_nc.tif",
         year_parser=_second_token_year,
         month_parser=_second_token_month,
@@ -376,8 +376,7 @@ def load_binary_annual(
     """Boolean burned mask (``True`` = burned) for one product/year (or month).
 
     With ``month=None`` (default) all of the year's files are OR'd into a single
-    annual mask (a pixel that burned in *any* month counts as burned), mirroring
-    the original sandbox logic. With ``month`` set, only that month's file(s) are
+    annual mask (a pixel that burned in *any* month counts as burned). With ``month`` set, only that month's file(s) are
     loaded (and OR'd, if a month has more than one). The result is clipped to
     ``aoi`` with its native CRS preserved.
 
