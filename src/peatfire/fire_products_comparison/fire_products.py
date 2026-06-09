@@ -190,10 +190,9 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        # download_and_clip_data.ipynb writes GABAM to RAW (cell output confirms
-        # data/raw/fire/gabam/gabam_{YYYY}_nc.tif). The inventory CSV lists a
-        # processed path that does not match the executed code -- using raw.
-        root_parts=("raw", "fire", "gabam"),
+        # download_and_clip_data.ipynb clips GABAM to
+        # data/processed/fire/gabam/gabam_{YYYY}_nc.tif.
+        root_parts=("processed", "fire", "gabam"),
         glob="gabam_*_nc.tif",
         year_parser=_gabam_year,
         burn_predicate=lambda da: da == 1,
