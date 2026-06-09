@@ -45,3 +45,26 @@ log each methodological choice
 - **Plot style** (plotting.set_fire_style): products encoded by colour only
   (colour-blind-safe Okabe-Ito cycle), top/right spines removed, frameless
   legend.
+
+- **Total least squares + RMSE for pairwise scatter comparison** (Humber et al.
+  2019). Two-product comparison uses TLS (orthogonal regression, minimises
+  perpendicular distance) rather than OLS, because both products carry error
+  (errors-in-variables); OLS would bias the slope by assuming x is error-free.
+  RMSE is reported against the y=x line. `agreement_matrix` gains
+  `method="tls_slope"` (asymmetric: [a,b] uses a as x, b as y) and
+  `method="rmse"`; `product_pair_scatter` + `plot_product_scatter` draw the
+  per-cell scatter with the TLS and y=x lines. Each scatter point is a
+  common-grid cell -- our per-spatial-unit analogue of Humber's per-TSA points.
+
+- **Equal-area CRS vs TSA polygons are different roles.** Reprojecting to
+  EPSG:5070 is the analogue of Humber's *latitude/area correction* (their
+  geographic products are cosine-weighted; equal-area products are not), NOT of
+  their TSA polygons. The TSA polygons are spatial *aggregation units*; our
+  common-grid cells play that role.
+
+- **Active fire (VIIRS) in the temporal comparison.** `period_totals_series`
+  reports burned-area km^2 for BA products and detection *count* for occurrence
+  products, so VIIRS joins the per-period (temporal) correlation/TLS against the
+  BA products -- the quantitative analogue of Humber's temporal heat maps.
+  Pearson (scale-invariant) includes VIIRS; TLS slope / RMSE on totals stay on
+  the BA products (shared km^2 units).

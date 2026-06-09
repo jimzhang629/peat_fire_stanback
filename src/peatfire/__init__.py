@@ -46,12 +46,18 @@ try:  # optional geospatial API
         build_common_grid,
         burned_area_km2,
         compare_fire_products,
+        period_totals_series,
+        product_pair_scatter,
+        rmse,
         stack_on_common_grid,
+        total_least_squares,
     )
     from .fire_products_comparison.plotting import (
         plot_agreement_heatmap,
         plot_annual_series,
         plot_overlay_map,
+        plot_product_scatter,
+        plot_temporal_heatmap,
         set_fire_style,
     )
 
@@ -67,10 +73,16 @@ try:  # optional geospatial API
         "build_common_grid",
         "burned_area_km2",
         "compare_fire_products",
+        "period_totals_series",
+        "product_pair_scatter",
+        "rmse",
         "stack_on_common_grid",
+        "total_least_squares",
         "plot_agreement_heatmap",
         "plot_annual_series",
         "plot_overlay_map",
+        "plot_product_scatter",
+        "plot_temporal_heatmap",
         "set_fire_style",
     ]
 except ImportError:

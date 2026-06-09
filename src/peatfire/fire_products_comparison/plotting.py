@@ -17,6 +17,8 @@ import pandas as pd
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
 
+from .fire_comparison import rmse, total_least_squares
+
 # Okabe-Ito colour-blind-safe qualitative palette.
 OKABE_ITO = [
     "#0072B2",  # blue
@@ -120,6 +122,134 @@ def plot_agreement_heatmap(
         ax.set_title(title)
     fig.colorbar(im, ax=ax, shrink=0.8)
     # heatmaps want all four spines
+    for s in ax.spines.values():
+        s.set_visible(True)
+    return fig
+
+
+def plot_product_scatter(
+    x,
+    y,
+    xlabel: str = "Product X",
+    ylabel: str = "Product Y",
+    title: Optional[str] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """Scatterplot of two products with a total-least-squares fit and y=x line.
+
+    ``x`` and ``y`` are paired per-unit values (e.g. from
+    :func:`peatfire.fire_products_comparison.product_pair_scatter`). Draws the
+    points, the **y = x** reference (perfect agreement), and the **TLS** fit, and
+    annotates the TLS slope/intercept and the RMSE -- the comparison Humber et al.
+    report. Equal aspect so the y=x line reads at 45 degrees.
+    """
+    set_fire_style()
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    else:
+        fig = ax.figure
+
+    if x.size == 0:
+        ax.text(0.5, 0.5, "no overlapping data", ha="center", va="center")
+        return fig
+
+    ax.scatter(x, y, s=8, alpha=0.4, color=OKABE_ITO[0], edgecolor="none")
+    lo = float(min(x.min(), y.min()))
+    hi = float(max(x.max(), y.max()))
+    ax.plot([lo, hi], [lo, hi], ls="--", color="grey", label="y = x")
+
+    slope, intercept = total_least_squares(x, y)
+    if np.isfinite(slope):
+        xs = np.array([lo, hi])
+        ax.plot(
+            xs, slope * xs + intercept, color=OKABE_ITO[3],
+            label=f"TLS: y = {slope:.2f}x + {intercept:.2g}",
+        )
+    err = rmse(x, y)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title or f"RMSE = {err:.3g}")
+    ax.legend(loc="upper left")
+    ax.set_aspect("equal", adjustable="datalim")
+    return fig
+
+
+def plot_temporal_heatmap(
+    totals: pd.DataFrame,
+    normalize: Optional[str] = "row",
+    cmap: str = "magma",
+    active_fire: str = "VIIRS",
+    title: Optional[str] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """Humber-style temporal heat map: burned area per product over time.
+
+    ``totals`` is the output of
+    :func:`peatfire.fire_products_comparison.period_totals_series` (index = time
+    periods, one column per product). Rows become products and columns become
+    time, so you can read *when* each product detects fire. The occurrence
+    product (``active_fire``, e.g. VIIRS) is placed in the bottom row as an
+    independent indicator of when fire actually occurred -- bright cells that
+    line up vertically mean a product's burn detections coincide in time with
+    active fire.
+
+    Parameters
+    ----------
+    normalize : {"row", None}
+        ``"row"`` (default) scales each product's row to [0, 1] by its own max,
+        so the *timing* pattern is comparable across products despite different
+        units (km^2 burned area vs VIIRS detection count). ``None`` plots raw
+        values on a single shared colour scale (only sensible if every column is
+        in the same unit).
+    """
+    set_fire_style()
+    df = totals.dropna(axis=1, how="all").copy()
+
+    # order rows with the active-fire reference last, if present
+    cols = list(df.columns)
+    if active_fire in cols:
+        cols = [c for c in cols if c != active_fire] + [active_fire]
+    df = df[cols]
+
+    data = df.to_numpy(dtype="float64").T  # rows = products, cols = time
+    if normalize == "row":
+        with np.errstate(invalid="ignore"):
+            rowmax = np.nanmax(np.where(np.isfinite(data), data, np.nan), axis=1, keepdims=True)
+        rowmax[~np.isfinite(rowmax) | (rowmax == 0)] = 1.0
+        data = data / rowmax
+    data = np.ma.masked_invalid(data)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(max(6, 0.35 * data.shape[1] + 2), 0.6 * data.shape[0] + 1.5))
+    else:
+        fig = ax.figure
+
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad("0.9")  # NaN periods shown light grey
+    im = ax.imshow(data, aspect="auto", cmap=cmap_obj, interpolation="nearest")
+
+    # time labels (thin them out if there are many)
+    periods = list(df.index)
+    def _lab(p):
+        return p.strftime("%Y-%m") if hasattr(p, "strftime") else str(p)
+    step = max(1, len(periods) // 24)
+    ticks = list(range(0, len(periods), step))
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([_lab(periods[i]) for i in ticks], rotation=90)
+    ax.set_yticks(range(len(cols)))
+    ax.set_yticklabels(cols)
+
+    # separate the active-fire reference row with a line
+    if active_fire in cols:
+        ax.axhline(len(cols) - 1.5, color="white", linewidth=2)
+
+    label = "per-row normalised intensity" if normalize == "row" else "value (km$^2$ / count)"
+    fig.colorbar(im, ax=ax, shrink=0.8, label=label)
+    ax.set_title(title or "Burned area over time, by product (VIIRS active fire = reference)")
+    ax.set_xlabel("Time")
     for s in ax.spines.values():
         s.set_visible(True)
     return fig
