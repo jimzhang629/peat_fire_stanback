@@ -13,7 +13,7 @@ rasterio, matplotlib, ...). It is imported lazily below so that importing
 environment without those packages installed.
 """
 
-from .data_loading import (
+from .preproc.data_loading import (
     DATA_DIR,
     PROJECT_ROOT,
     data_path,
@@ -32,14 +32,14 @@ __all__ = [
 ]
 
 try:  # optional geospatial API
-    from .fire_products import (
+    from .fire_products_comparison.fire_products import (
         FIRE_PRODUCTS,
         ProductSpec,
         get_spec,
         list_products,
         load_standardized,
     )
-    from .fire_comparison import (
+    from .fire_products_comparison.fire_comparison import (
         ANALYSIS_CRS,
         agreement_matrix,
         annual_burned_area_series,
@@ -48,7 +48,7 @@ try:  # optional geospatial API
         compare_fire_products,
         stack_on_common_grid,
     )
-    from .plotting import (
+    from .fire_products_comparison.plotting import (
         plot_agreement_heatmap,
         plot_annual_series,
         plot_overlay_map,

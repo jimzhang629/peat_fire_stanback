@@ -26,7 +26,7 @@ import geopandas as gpd
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 
-from .data_loading import data_path
+from ..preproc.data_loading import data_path
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +149,10 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        # inventory: data/processed/fire/gabam/gabam_{YYYY}_nc.tif (processed, not raw)
-        root_parts=("processed", "fire", "gabam"),
+        # download_and_clip_data.ipynb writes GABAM to RAW (cell output confirms
+        # data/raw/fire/gabam/gabam_{YYYY}_nc.tif). The inventory CSV lists a
+        # processed path that does not match the executed code -- using raw.
+        root_parts=("raw", "fire", "gabam"),
         glob="gabam_*_nc.tif",
         year_parser=_gabam_year,
         burn_predicate=lambda da: da == 1,
@@ -205,9 +207,10 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        # inventory: data/processed/fire/se_firemap/cbi_mosaic_{YYYY}_nc(.tif)
+        # notebook clips to a per-year SUB-FOLDER:
+        # data/processed/fire/se_firemap/cbi_mosaic_{YYYY}_nc/cbi_mosaic_{YYYY}_nc.tif
         root_parts=("processed", "fire", "se_firemap"),
-        glob="cbi_mosaic_*_nc.tif",  # CONFIRM extension (inventory shows no .tif)
+        glob="cbi_mosaic_*_nc/cbi_mosaic_*_nc.tif",
         year_parser=_third_token_year,
         value_predicate=lambda da: da,  # continuous CBI 0-3
         native_crs="EPSG:5070",
