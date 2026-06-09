@@ -99,8 +99,9 @@ class ProductSpec:
 # ---------------------------------------------------------------------------
 # Filename year parsers (kept tiny and named so specs read clearly)
 # ---------------------------------------------------------------------------
-def _mcd64_year(p: Path) -> int:
-    # 'MCD64A1_A2017001_nc' -> 'A2017001' -> 2017
+def _modis_a_year(p: Path) -> int:
+    # MODIS-style 'A<YYYYDDD>' token: 'MCD64A1_A2017001_nc' -> 2017,
+    # 'MOSEV_A2001001_nc' -> 2001.
     return int(p.stem.split("_")[1][1:5])
 
 
@@ -110,17 +111,23 @@ def _gabam_year(p: Path) -> int:
 
 
 def _second_token_year(p: Path) -> int:
-    # generic '<prod>_<year>_...' helper for products we haven't downloaded yet
+    # '<prod>_<year>_...' e.g. 'firecci51_2001_01_nc' -> 2001
     return int(p.stem.split("_")[1])
+
+
+def _third_token_year(p: Path) -> int:
+    # '<a>_<b>_<year>_...' e.g. 'cbi_mosaic_2001_nc' -> 2001,
+    # 'mtbs_NC_2001' -> 2001, 'fireccis311_JD_2019_01_nc' -> 2019.
+    return int(p.stem.split("_")[2])
 
 
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
-# Products with data already in the repo (MCD64A1, GABAM, VIIRS) have concrete
-# specs. The others are placeholders: their globs / encodings are marked TODO
-# and must be confirmed once the data is downloaded. Until then the loaders skip
-# them gracefully (see ``_files_for_year``).
+# Paths, globs and filename year-parsers below match the layout documented in
+# ``metadata``/``data_inventory.csv``. Products that are downloaded but whose
+# pixel *encoding* still needs confirming are flagged ``CONFIRM BAND``; products
+# not yet downloaded skip gracefully via ``_files_for_year``.
 FIRE_PRODUCTS: dict[str, ProductSpec] = {
     "MCD64A1": ProductSpec(
         name="MCD64A1",
@@ -128,12 +135,13 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=500.0,
         temporal="monthly",
+        # processed monthly tifs: data/processed/fire/MCD64A1_061/MCD64A1_A2017001_nc.tif
         root_parts=("processed", "fire", "MCD64A1_061"),
         glob="MCD64A1_*_nc.tif",
-        year_parser=_mcd64_year,
+        year_parser=_modis_a_year,
         # BurnDate is day-of-year 1-366 for burned pixels; 0/-1/-2/NaN unburned.
         burn_predicate=lambda da: da > 0,
-        native_crs="Sinusoidal",
+        native_crs="Sinusoidal (SR-ORG:6974)",
     ),
     "GABAM": ProductSpec(
         name="GABAM",
@@ -141,11 +149,41 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        root_parts=("raw", "fire", "gabam"),
+        # inventory: data/processed/fire/gabam/gabam_{YYYY}_nc.tif (processed, not raw)
+        root_parts=("processed", "fire", "gabam"),
         glob="gabam_*_nc.tif",
         year_parser=_gabam_year,
         burn_predicate=lambda da: da == 1,
         native_crs="EPSG:4326",
+    ),
+    "FireCCI51": ProductSpec(
+        name="FireCCI51",
+        family="burned_area",
+        kind="raster",
+        native_res_m=250.0,
+        temporal="monthly",
+        # inventory: files sit directly in data/processed/fire/, no sub-folder:
+        # firecci51_{YYYY}_{MM}_nc.tif
+        root_parts=("processed", "fire"),
+        glob="firecci51_*_nc.tif",
+        year_parser=_second_token_year,
+        # GEE FireCCI51 'BurnDate' band: 1-366 burned, 0 unburned, -1/-2 unobserved.
+        burn_predicate=lambda da: da > 0,  # CONFIRM BAND: assumes BurnDate exported
+        native_crs="EPSG:4326",
+    ),
+    "FireCCIS311": ProductSpec(
+        name="FireCCIS311",
+        family="burned_area",
+        kind="raster",
+        native_res_m=300.0,
+        temporal="monthly",
+        # inventory: data/processed/fire/fireccis311/{layer}/fireccis311_{layer}_{YYYY}_{MM}_nc.tif
+        # JD = burn date layer (CL=confidence, LC=land cover are the other layers).
+        root_parts=("processed", "fire", "fireccis311", "JD"),
+        glob="fireccis311_JD_*_nc.tif",
+        year_parser=_third_token_year,
+        burn_predicate=lambda da: da > 0,  # JD burn date > 0 = burned
+        native_crs="EPSG:4326",  # short record: 2019-2024 only
     ),
     "VIIRS": ProductSpec(
         name="VIIRS",
@@ -153,36 +191,13 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="vector",
         native_res_m=375.0,
         temporal="events",
+        # S-NPP archive is the long record (2012-present). noaa20/noaa21 NRT
+        # gpkgs also exist in this folder and can be added as separate specs.
         root_parts=("processed", "fire", "viirs"),
         glob="viirs_snpp_archive_nc.gpkg",
         date_field="ACQ_DATE",
         frp_field="FRP",
         native_crs="EPSG:4326",
-    ),
-    # ---- placeholders: confirm globs/encodings when data lands ----
-    "FireCCI51": ProductSpec(
-        name="FireCCI51",
-        family="burned_area",
-        kind="raster",
-        native_res_m=250.0,
-        temporal="monthly",
-        root_parts=("processed", "fire", "FireCCI51"),
-        glob="firecci51_*_nc.tif",  # TODO confirm
-        year_parser=_second_token_year,
-        burn_predicate=lambda da: da > 0,  # TODO confirm (date-of-first-detection)
-        native_crs="EPSG:4326",
-    ),
-    "USGS_BA": ProductSpec(
-        name="USGS_BA",
-        family="burned_area",
-        kind="raster",
-        native_res_m=30.0,
-        temporal="annual",
-        root_parts=("processed", "fire", "usgs_lba"),
-        glob="usgs_lba_*_nc.tif",  # TODO confirm
-        year_parser=_second_token_year,
-        burn_predicate=lambda da: da > 0,  # TODO confirm (burn classification)
-        native_crs="EPSG:5070",
     ),
     "SE_FireMap": ProductSpec(
         name="SE_FireMap",
@@ -190,10 +205,11 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
+        # inventory: data/processed/fire/se_firemap/cbi_mosaic_{YYYY}_nc(.tif)
         root_parts=("processed", "fire", "se_firemap"),
-        glob="se_firemap_*_nc.tif",  # TODO confirm
-        year_parser=_second_token_year,
-        value_predicate=lambda da: da,  # continuous CBI 0-3; TODO confirm band
+        glob="cbi_mosaic_*_nc.tif",  # CONFIRM extension (inventory shows no .tif)
+        year_parser=_third_token_year,
+        value_predicate=lambda da: da,  # continuous CBI 0-3
         native_crs="EPSG:5070",
     ),
     "MOSEV": ProductSpec(
@@ -202,10 +218,11 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=500.0,
         temporal="monthly",
+        # inventory: data/processed/fire/mosev/MOSEV_A{YYYYDDD}_nc.tif
         root_parts=("processed", "fire", "mosev"),
-        glob="mosev_*_nc.tif",  # TODO confirm
-        year_parser=_second_token_year,
-        value_predicate=lambda da: da,  # dNBR; TODO confirm band
+        glob="MOSEV_*_nc.tif",
+        year_parser=_modis_a_year,
+        value_predicate=lambda da: da,  # CONFIRM BAND: dNBR / RdNBR / post-NBR
         native_crs="Sinusoidal",
     ),
     "MTBS": ProductSpec(
@@ -214,10 +231,27 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        root_parts=("processed", "fire", "mtbs"),
-        glob="mtbs_*_nc.tif",  # TODO confirm
+        # inventory: NOT yet clipped to processed; raw is per-year in sub-folders:
+        # data/raw/fire/mtbs/mtbs_NC_{YYYY}/mtbs_NC_{YYYY}.tif (loaders clip in-memory)
+        root_parts=("raw", "fire", "mtbs"),
+        glob="mtbs_NC_*/mtbs_NC_*.tif",
+        year_parser=_third_token_year,
+        # MTBS thematic severity classes (1-6), NOT continuous: CONFIRM handling
+        # (treat as classes / remap) before trusting Spearman against CBI/dNBR.
+        value_predicate=lambda da: da,
+        native_crs="EPSG:5070",
+    ),
+    # ---- not yet downloaded: skips gracefully until the data lands ----
+    "USGS_BA": ProductSpec(
+        name="USGS_BA",
+        family="burned_area",
+        kind="raster",
+        native_res_m=30.0,
+        temporal="annual",
+        root_parts=("processed", "fire", "usgs_lba"),
+        glob="usgs_lba_*_nc.tif",  # TODO confirm when downloaded
         year_parser=_second_token_year,
-        value_predicate=lambda da: da,  # dNBR / thematic class; TODO confirm
+        burn_predicate=lambda da: da > 0,
         native_crs="EPSG:5070",
     ),
 }
