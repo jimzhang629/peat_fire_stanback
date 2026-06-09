@@ -293,6 +293,11 @@ def plot_overlay_map(
         cmap=OVERLAY_CMAP, vmin=1, vmax=3, interpolation="nearest",
     )
     aoi_gdf.to_crs(a.rio.crs).boundary.plot(ax=ax, color="black", linewidth=0.8)
+    # pin to the full raster extent (geopandas autoscales to the tighter AOI
+    # bbox, which clips the boundary); equal aspect avoids distortion.
+    ax.set_xlim(left, right)
+    ax.set_ylim(bottom, top)
+    ax.set_aspect("equal")
     ax.set_title(f"Burned area {year}: {a_name} vs {b_name}")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
@@ -363,6 +368,12 @@ def plot_consensus_map(
         cmap=cmap_obj, norm=norm, interpolation="nearest",
     )
     aoi_gdf.to_crs(ref.rio.crs).boundary.plot(ax=ax, color="black", linewidth=0.8)
+    # geopandas autoscales to the AOI's tight bbox (slightly inside the grid),
+    # clipping the boundary at the frame; pin limits to the full raster extent
+    # and keep equal aspect so the projection is not distorted.
+    ax.set_xlim(left, right)
+    ax.set_ylim(bottom, top)
+    ax.set_aspect("equal")
 
     label = f"{year}-{month:02d}" if month else str(year)
     ax.set_title(
