@@ -26,6 +26,8 @@ from .fire_comparison import (
     product_pair_scatter,
     rasterize_points_to_grid,
     rmse,
+    to_common_grid,
+    rasterize_points_to_grid,
     stack_on_common_grid,
     to_common_grid,
     total_least_squares,
