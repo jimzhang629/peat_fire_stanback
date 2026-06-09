@@ -26,7 +26,11 @@ import geopandas as gpd
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 
-from ..preproc.data_loading import data_path
+from ..preproc.data_loading import (
+    clip_raster_to_mask,
+    clip_vector_to_mask,
+    data_path,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +66,11 @@ class ProductSpec:
         ``Path -> int`` mapping a file to its year. Required for raster products
         whose year is encoded in the filename. ``None`` for vector products that
         are filtered by a date column instead.
+    month_parser : callable, optional
+        ``Path -> int`` (1-12) mapping a file to its calendar month. Set this for
+        ``"monthly"`` products to enable monthly-resolution comparison. Leave it
+        ``None`` for annual-only products -- they are then automatically dropped
+        from monthly mode (a month filter on them yields no files).
     burn_predicate : callable, optional
         ``DataArray -> boolean DataArray`` marking burned pixels. Required for
         ``burned_area`` rasters.
@@ -85,6 +94,7 @@ class ProductSpec:
     root_parts: tuple
     glob: str
     year_parser: Optional[Callable[[Path], int]] = None
+    month_parser: Optional[Callable[[Path], int]] = None
     burn_predicate: Optional[Callable[[xr.DataArray], xr.DataArray]] = None
     value_predicate: Optional[Callable[[xr.DataArray], xr.DataArray]] = None
     date_field: Optional[str] = None
@@ -122,6 +132,30 @@ def _third_token_year(p: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Filename month parsers (1-12). Only monthly products need one.
+# ---------------------------------------------------------------------------
+def _modis_a_month(p: Path) -> int:
+    # MODIS 'A<YYYYDDD>' encodes year + day-of-year, NOT a month number, so the
+    # month is derived from the day-of-year: 'MCD64A1_A2017032_nc' -> Feb -> 2,
+    # 'MOSEV_A2001001_nc' -> Jan -> 1.
+    from datetime import date, timedelta
+
+    tok = p.stem.split("_")[1]            # 'A2017032'
+    year, doy = int(tok[1:5]), int(tok[5:8])
+    return (date(year, 1, 1) + timedelta(days=doy - 1)).month
+
+
+def _second_token_month(p: Path) -> int:
+    # '<prod>_<year>_<MM>_...' e.g. 'firecci51_2001_01_nc' -> 1
+    return int(p.stem.split("_")[2])
+
+
+def _fourth_token_month(p: Path) -> int:
+    # '<a>_<b>_<year>_<MM>_...' e.g. 'fireccis311_JD_2019_01_nc' -> 1
+    return int(p.stem.split("_")[3])
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 # Paths, globs and filename year-parsers below match the layout documented in
@@ -139,6 +173,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("processed", "fire", "MCD64A1_061"),
         glob="MCD64A1_*_nc.tif",
         year_parser=_modis_a_year,
+        month_parser=_modis_a_month,
         # BurnDate is day-of-year 1-366 for burned pixels; 0/-1/-2/NaN unburned.
         burn_predicate=lambda da: da > 0,
         native_crs="Sinusoidal (SR-ORG:6974)",
@@ -169,6 +204,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("processed", "fire"),
         glob="firecci51_*_nc.tif",
         year_parser=_second_token_year,
+        month_parser=_second_token_month,
         # GEE FireCCI51 'BurnDate' band: 1-366 burned, 0 unburned, -1/-2 unobserved.
         burn_predicate=lambda da: da > 0,  # CONFIRM BAND: assumes BurnDate exported
         native_crs="EPSG:4326",
@@ -184,6 +220,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("processed", "fire", "fireccis311", "JD"),
         glob="fireccis311_JD_*_nc.tif",
         year_parser=_third_token_year,
+        month_parser=_fourth_token_month,
         burn_predicate=lambda da: da > 0,  # JD burn date > 0 = burned
         native_crs="EPSG:4326",  # short record: 2019-2024 only
     ),
@@ -225,6 +262,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("processed", "fire", "mosev"),
         glob="MOSEV_*_nc.tif",
         year_parser=_modis_a_year,
+        month_parser=_modis_a_month,
         value_predicate=lambda da: da,  # CONFIRM BAND: dNBR / RdNBR / post-NBR
         native_crs="Sinusoidal",
     ),
@@ -281,31 +319,33 @@ def list_products(family: Optional[str] = None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# In-memory clipping
+# Clipping
 #
-# data_loading.clip_raster_to_mask / clip_vector_to_mask write to disk, which we
-# do not want to do once per (product, year). These private helpers do the same
-# clip in memory, leaving the tested disk-writing functions untouched.
+# We reuse the project's clip helpers from preproc.data_loading -- the no-save
+# variants, which clip in memory (we do not want a disk write per product/year).
+# Rasters are squeezed to 2D (drop the singleton band) so the burn/value
+# predicates and the common-grid step work on (y, x) arrays.
 # ---------------------------------------------------------------------------
-def _clip_raster_mem(path: Path, aoi: gpd.GeoDataFrame) -> xr.DataArray:
-    da = rioxarray.open_rasterio(path, masked=True).squeeze("band", drop=True)
-    aoi_in_crs = aoi.to_crs(da.rio.crs)
-    return da.rio.clip(aoi_in_crs.geometry, aoi_in_crs.crs)
+def _clip_raster(path: Path, aoi: gpd.GeoDataFrame) -> xr.DataArray:
+    return clip_raster_to_mask(path, aoi).squeeze("band", drop=True)
 
 
-def _clip_vector_mem(path: Path, aoi: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    gdf = gpd.read_file(path)
-    aoi_in_crs = aoi.to_crs(gdf.crs)
-    return gpd.sjoin(
-        gdf, aoi_in_crs[["geometry"]], predicate="within"
-    ).drop(columns="index_right")
+def _clip_vector(path: Path, aoi: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    return clip_vector_to_mask(path, aoi)
 
 
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
-def _files_for_year(spec: ProductSpec, year: int) -> list[Path]:
-    """Return the file(s) for ``spec`` in ``year`` (``[]`` if none/absent).
+def _files_for_period(
+    spec: ProductSpec, year: int, month: Optional[int] = None
+) -> list[Path]:
+    """Return the file(s) for ``spec`` in a year, or a single month if given.
+
+    ``month=None`` keeps the original annual behaviour (all of the year's files).
+    If ``month`` is given but the product has no ``month_parser`` (i.e. it is
+    annual-only), the result is empty -- which is how annual-only products get
+    dropped from monthly mode.
 
     A missing directory or empty result is *not* an error: the product is simply
     skipped with a warning, so a comparison can run on whatever is downloaded.
@@ -319,35 +359,41 @@ def _files_for_year(spec: ProductSpec, year: int) -> list[Path]:
     files = sorted(spec.directory.glob(spec.glob))
     if spec.year_parser is None:
         return files  # vector products are filtered by date later
-    matched = [f for f in files if spec.year_parser(f) == year]
-    return matched
+    files = [f for f in files if spec.year_parser(f) == year]
+    if month is not None:
+        if spec.month_parser is None:
+            return []  # annual-only product -> not available at monthly resolution
+        files = [f for f in files if spec.month_parser(f) == month]
+    return files
 
 
 # ---------------------------------------------------------------------------
 # Standardized loaders
 # ---------------------------------------------------------------------------
 def load_binary_annual(
-    product: str, year: int, aoi: gpd.GeoDataFrame
+    product: str, year: int, aoi: gpd.GeoDataFrame, month: Optional[int] = None
 ) -> Optional[xr.DataArray]:
-    """Annual boolean burned mask (``True`` = burned) for one product/year.
+    """Boolean burned mask (``True`` = burned) for one product/year (or month).
 
-    Monthly products are OR'd into a single annual mask (a pixel that burned in
-    *any* month counts as burned for the year), mirroring the original sandbox
-    logic. The result is clipped to ``aoi`` with its native CRS preserved.
+    With ``month=None`` (default) all of the year's files are OR'd into a single
+    annual mask (a pixel that burned in *any* month counts as burned), mirroring
+    the original sandbox logic. With ``month`` set, only that month's file(s) are
+    loaded (and OR'd, if a month has more than one). The result is clipped to
+    ``aoi`` with its native CRS preserved.
 
-    Returns ``None`` if the product has no data for ``year`` (caller skips it).
+    Returns ``None`` if the product has no data for the period (caller skips it).
     """
     spec = get_spec(product)
     if spec.burn_predicate is None:
         raise ValueError(f"{product} has no burn_predicate (not a burned-area product).")
 
-    files = _files_for_year(spec, year)
+    files = _files_for_period(spec, year, month)
     if not files:
         return None
 
     masks = []
     for f in files:
-        clipped = _clip_raster_mem(f, aoi)
+        clipped = _clip_raster(f, aoi)
         masks.append(spec.burn_predicate(clipped))
 
     if len(masks) == 1:
@@ -360,22 +406,23 @@ def load_binary_annual(
 
 
 def load_continuous_annual(
-    product: str, year: int, aoi: gpd.GeoDataFrame
+    product: str, year: int, aoi: gpd.GeoDataFrame, month: Optional[int] = None
 ) -> Optional[xr.DataArray]:
-    """Annual continuous severity grid (e.g. CBI / dNBR) for one product/year.
+    """Continuous severity grid (e.g. CBI / dNBR) for one product/year (or month).
 
-    Monthly severity products are aggregated by per-pixel maximum. Returns
-    ``None`` if there is no data for ``year``.
+    With ``month=None`` the year's files are aggregated by per-pixel maximum;
+    with ``month`` set, only that month is loaded. Returns ``None`` if there is no
+    data for the period.
     """
     spec = get_spec(product)
     if spec.value_predicate is None:
         raise ValueError(f"{product} has no value_predicate (not a severity product).")
 
-    files = _files_for_year(spec, year)
+    files = _files_for_period(spec, year, month)
     if not files:
         return None
 
-    vals = [spec.value_predicate(_clip_raster_mem(f, aoi)) for f in files]
+    vals = [spec.value_predicate(_clip_raster(f, aoi)) for f in files]
     if len(vals) == 1:
         annual = vals[0]
     else:
@@ -386,39 +433,45 @@ def load_continuous_annual(
 
 
 def load_points(
-    product: str, year: int, aoi: gpd.GeoDataFrame
+    product: str, year: int, aoi: gpd.GeoDataFrame, month: Optional[int] = None
 ) -> Optional[gpd.GeoDataFrame]:
-    """Active-fire point detections (with FRP) for one product/year.
+    """Active-fire point detections (with FRP) for one product/year (or month).
 
-    The whole clipped layer is read, then filtered to ``year`` using
-    ``spec.date_field``. Returns ``None`` if the file is absent or no detections
-    fall in the year.
+    The whole clipped layer is read, then filtered to ``year`` (and ``month`` if
+    given) using ``spec.date_field``. Returns ``None`` if the file is absent or
+    no detections fall in the period.
     """
     spec = get_spec(product)
-    files = _files_for_year(spec, year)
+    files = _files_for_period(spec, year)
     if not files:
         return None
 
-    gdf = _clip_vector_mem(files[0], aoi)
+    gdf = _clip_vector(files[0], aoi)
     if spec.date_field and spec.date_field in gdf.columns:
         dates = gpd.pd.to_datetime(gdf[spec.date_field], errors="coerce")
-        gdf = gdf[dates.dt.year == year]
+        keep = dates.dt.year == year
+        if month is not None:
+            keep &= dates.dt.month == month
+        gdf = gdf[keep]
     if gdf.empty:
         return None
     return gdf
 
 
-def load_standardized(product: str, year: int, aoi: gpd.GeoDataFrame):
+def load_standardized(
+    product: str, year: int, aoi: gpd.GeoDataFrame, month: Optional[int] = None
+):
     """Dispatch to the right loader based on the product's ``family``.
 
-    Returns an annual boolean mask (burned_area), a continuous grid (severity),
-    a points GeoDataFrame (occurrence), or ``None`` when data is absent.
+    Passes ``month`` through so callers can request a single month. Returns a
+    boolean mask (burned_area), a continuous grid (severity), a points
+    GeoDataFrame (occurrence), or ``None`` when data is absent.
     """
     spec = get_spec(product)
     if spec.family == "burned_area":
-        return load_binary_annual(product, year, aoi)
+        return load_binary_annual(product, year, aoi, month)
     if spec.family == "severity":
-        return load_continuous_annual(product, year, aoi)
+        return load_continuous_annual(product, year, aoi, month)
     if spec.family == "occurrence":
-        return load_points(product, year, aoi)
+        return load_points(product, year, aoi, month)
     raise ValueError(f"Unknown family {spec.family!r} for product {product!r}.")

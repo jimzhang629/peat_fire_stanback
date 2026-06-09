@@ -58,6 +58,38 @@ def _as_gdf(aoi: AOILike) -> gpd.GeoDataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Time unit handling (annual vs monthly)
+# ---------------------------------------------------------------------------
+def _expand_periods(years: Iterable[int], temporal_unit: str):
+    """Expand a list of years into ``(year, month)`` periods.
+
+    ``temporal_unit="year"`` -> one period per year with ``month=None`` (the
+    annual behaviour). ``temporal_unit="month"`` -> twelve periods per year.
+    """
+    years = list(years)
+    if temporal_unit == "year":
+        return [(y, None) for y in years]
+    if temporal_unit == "month":
+        return [(y, m) for y in years for m in range(1, 13)]
+    raise ValueError(f"temporal_unit must be 'year' or 'month', got {temporal_unit!r}.")
+
+
+def _period_label(year: int, month: Optional[int]):
+    """Index label for a period: the int year (annual) or a month-start Timestamp."""
+    return year if month is None else pd.Timestamp(year=year, month=month, day=1)
+
+
+def _monthly_capable(product: str) -> bool:
+    """True if a product can be compared at monthly resolution.
+
+    Monthly rasters carry a ``month_parser``; occurrence points (VIIRS) are
+    filtered by date. Annual-only products are excluded from monthly mode.
+    """
+    spec = get_spec(product)
+    return spec.month_parser is not None or spec.family == "occurrence"
+
+
+# ---------------------------------------------------------------------------
 # Area metric (moved verbatim in behaviour from the sandbox notebook)
 # ---------------------------------------------------------------------------
 def burned_area_km2(
@@ -174,39 +206,51 @@ def annual_burned_area_series(
     aoi: gpd.GeoDataFrame,
     mode: str = "native",
     common_grid_res: float = 500.0,
+    temporal_unit: str = "year",
 ) -> pd.DataFrame:
-    """Total annual burned area (km^2) per product, indexed by year.
+    """Total burned area (km^2) per product, indexed by period.
 
     ``mode="native"`` uses each product's own pixel area (reproducing Humber
     Figure 3 directly). ``mode="common_grid"`` first resamples every product to a
     shared ``common_grid_res`` grid (``how="max"``), so cell area is identical
     across products -- the fair, resolution-controlled comparison.
 
+    ``temporal_unit="year"`` indexes by integer year (the default). With
+    ``temporal_unit="month"`` the series is monthly (indexed by a month-start
+    Timestamp) and **annual-only products are dropped** -- only products with a
+    ``month_parser`` contribute.
+
     A ``<product>_pct_aoi`` column is also returned for each product, giving
     burned area as a percentage of the AOI area (comparable across AOIs of
     different size).
     """
-    years = list(years)
+    periods = _expand_periods(years, temporal_unit)
     grid = build_common_grid(aoi, res_m=common_grid_res) if mode == "common_grid" else None
     aoi_km2 = float(aoi.to_crs(ANALYSIS_CRS).area.sum()) / 1e6
 
-    rows: dict[int, dict[str, float]] = {y: {} for y in years}
+    rows: dict = {_period_label(y, m): {} for (y, m) in periods}
     for product in products:
-        if get_spec(product).family != "burned_area":
+        spec = get_spec(product)
+        if spec.family != "burned_area":
             continue
-        for year in years:
-            mask = load_standardized(product, year, aoi)
+        if temporal_unit == "month" and spec.month_parser is None:
+            continue  # annual-only product: not available at monthly resolution
+        for year, month in periods:
+            mask = load_standardized(product, year, aoi, month)
             if mask is None:
                 continue
             if mode == "common_grid":
                 mask = to_common_grid(mask.astype("float32"), grid, how="max") > 0
                 mask = mask.rio.write_crs(grid.rio.crs)
             km2 = burned_area_km2(mask)
-            rows[year][product] = km2
-            rows[year][f"{product}_pct_aoi"] = 100.0 * km2 / aoi_km2 if aoi_km2 else np.nan
+            label = _period_label(year, month)
+            rows[label][product] = km2
+            rows[label][f"{product}_pct_aoi"] = (
+                100.0 * km2 / aoi_km2 if aoi_km2 else np.nan
+            )
 
     df = pd.DataFrame.from_dict(rows, orient="index").sort_index()
-    df.index.name = "year"
+    df.index.name = "period" if temporal_unit == "month" else "year"
     return df
 
 
@@ -220,12 +264,14 @@ def stack_on_common_grid(
     common_grid_res: float = 500.0,
     binary: bool = True,
     grid: Optional[xr.DataArray] = None,
+    month: Optional[int] = None,
 ) -> dict[str, xr.DataArray]:
-    """Load each product for ``year`` and align it to one shared grid.
+    """Load each product for a year (or month) and align it to one shared grid.
 
     ``binary=True`` returns burned/unburned masks (occurrence products via
-    presence); ``binary=False`` returns continuous severity grids. Products
-    absent for the year are omitted from the returned dict.
+    presence); ``binary=False`` returns continuous severity grids. ``month`` (if
+    given) restricts to a single calendar month -- annual-only products then have
+    no data and are omitted, as are any products absent for the period.
     """
     if grid is None:
         grid = build_common_grid(aoi, res_m=common_grid_res)
@@ -233,14 +279,14 @@ def stack_on_common_grid(
     for product in products:
         spec = get_spec(product)
         if spec.family == "occurrence":
-            pts = load_points(product, year, aoi)
+            pts = load_points(product, year, aoi, month)
             if pts is None:
                 continue
             out[product] = rasterize_points_to_grid(
                 pts, grid, agg="any" if binary else "count"
             )
             continue
-        da = load_standardized(product, year, aoi)
+        da = load_standardized(product, year, aoi, month)
         if da is None:
             continue
         how = "max" if binary else "mean"
@@ -300,6 +346,7 @@ def agreement_matrix(
     method: str = "jaccard",
     common_grid_res: float = 500.0,
     pooling: str = "cells",
+    temporal_unit: str = "year",
 ) -> pd.DataFrame:
     """Pairwise agreement among products as a symmetric DataFrame.
 
@@ -308,32 +355,37 @@ def agreement_matrix(
     method : str
         ``"jaccard"``/``"iou"``, ``"kappa"``, ``"percent_agreement"`` operate on
         binary burned masks. ``"pearson"``/``"spearman"`` operate on continuous
-        values (severity grids when ``pooling="cells"``, or annual totals when
+        values (severity grids when ``pooling="cells"``, or per-period totals when
         ``pooling="years"``).
     pooling : str
-        ``"cells"`` pools all grid cells across ``years`` into paired vectors
+        ``"cells"`` pools all grid cells across every period into paired vectors
         (spatial agreement -- "do they burn the same places?").
-        ``"years"`` correlates each product's annual total across years
+        ``"years"`` correlates each product's per-period total
         (temporal co-variation -- "do they rise and fall together?").
+    temporal_unit : str
+        ``"year"`` (default) compares per year; ``"month"`` compares per calendar
+        month and drops annual-only products.
     """
     products = list(products)
     binary = method in ("jaccard", "iou", "kappa", "percent_agreement")
 
     if pooling == "years":
-        # correlate annual totals; works for any family that yields a yearly
-        # scalar -- here, burned-area products via common-grid totals.
+        # correlate per-period totals; here, burned-area products via common-grid
+        # totals (one value per year, or per month in monthly mode).
         df = annual_burned_area_series(
-            products, years, aoi, mode="common_grid", common_grid_res=common_grid_res
+            products, years, aoi, mode="common_grid",
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
         cols = [p for p in products if p in df.columns]
         return df[cols].corr(method="spearman" if method == "spearman" else "pearson")
 
-    # pooling == "cells": concatenate flattened cells across all years
+    # pooling == "cells": concatenate flattened cells across all periods
+    periods = _expand_periods(years, temporal_unit)
     pooled: dict[str, list[np.ndarray]] = {p: [] for p in products}
     grid = build_common_grid(aoi, res_m=common_grid_res)
-    for year in years:
+    for year, month in periods:
         stack = stack_on_common_grid(
-            products, year, aoi, binary=binary, grid=grid
+            products, year, aoi, binary=binary, grid=grid, month=month
         )
         for p in products:
             if p in stack:
@@ -363,8 +415,9 @@ def compare_fire_products(
     metric: str = "burned_area",
     common_grid_res: float = 500.0,
     agreement_methods: Iterable[str] = ("jaccard", "kappa"),
-    overlay_years: Optional[Iterable[int]] = None,
+    overlay_years: Optional[Iterable] = None,
     out_dir: Optional[Union[str, Path]] = None,
+    temporal_unit: str = "year",
 ) -> dict:
     """Run the full comparison for one AOI and return a dict of results.
 
@@ -382,13 +435,21 @@ def compare_fire_products(
     agreement_methods : iterable of str
         Which spatial-agreement metrics to compute. A temporal correlation
         matrix (pooling="years") is always added for burned area.
+    overlay_years : iterable, optional
+        Periods to build overlay stacks for. In annual mode these are integer
+        years; in monthly mode pass ``(year, month)`` tuples.
+    temporal_unit : str
+        ``"year"`` (default) compares per year. ``"month"`` compares per calendar
+        month and **drops annual-only products** (GABAM, USGS_BA, SE_FireMap,
+        MTBS), keeping the monthly products plus VIIRS -- matching the monthly
+        timing analysis in Humber et al.
 
     Returns
     -------
     dict
         Keys include ``"area_native"``, ``"area_common_grid"`` (DataFrames),
         ``"agreement_<method>"`` and ``"correlation_years"`` (DataFrames), and
-        ``"stacks"`` (per-overlay-year common-grid dicts). If ``out_dir`` is
+        ``"stacks"`` (per-overlay-period common-grid dicts). If ``out_dir`` is
         given, CSVs are written there too.
     """
     gdf = _as_gdf(aoi)
@@ -399,6 +460,9 @@ def compare_fire_products(
         # every agreement matrix as an independent check.
         products = list_products(metric) + list_products("occurrence")
     products = list(products)
+    if temporal_unit == "month":
+        # monthly resolution: keep only monthly-capable products (drops annual-only).
+        products = [p for p in products if _monthly_capable(p)]
     if years is None:
         years = range(2001, 2022)
     years = list(years)
@@ -408,35 +472,37 @@ def compare_fire_products(
 
     if metric == "burned_area":
         results["area_native"] = annual_burned_area_series(
-            family_products, years, gdf, mode="native"
+            family_products, years, gdf, mode="native", temporal_unit=temporal_unit
         )
         results["area_common_grid"] = annual_burned_area_series(
             family_products, years, gdf, mode="common_grid",
-            common_grid_res=common_grid_res,
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
         results["correlation_years"] = agreement_matrix(
             family_products, years, gdf, method="pearson", pooling="years",
-            common_grid_res=common_grid_res,
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
         for m in agreement_methods:
             results[f"agreement_{m}"] = agreement_matrix(
                 products, years, gdf, method=m, pooling="cells",
-                common_grid_res=common_grid_res,
+                common_grid_res=common_grid_res, temporal_unit=temporal_unit,
             )
     else:  # severity
         results["agreement_spearman"] = agreement_matrix(
             products, years, gdf, method="spearman", pooling="cells",
-            common_grid_res=common_grid_res,
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
 
     if overlay_years:
-        results["stacks"] = {
-            y: stack_on_common_grid(
-                family_products, y, gdf, common_grid_res=common_grid_res,
-                binary=(metric == "burned_area"),
+        # entries are int years (annual) or (year, month) tuples (monthly)
+        stacks: dict = {}
+        for entry in overlay_years:
+            yr, mo = entry if isinstance(entry, tuple) else (entry, None)
+            stacks[entry] = stack_on_common_grid(
+                family_products, yr, gdf, common_grid_res=common_grid_res,
+                binary=(metric == "burned_area"), month=mo,
             )
-            for y in overlay_years
-        }
+        results["stacks"] = stacks
 
     if out_dir is not None:
         out_dir = Path(out_dir)
