@@ -82,6 +82,11 @@ class ProductSpec:
         acquisition date (used to filter to a year).
     frp_field : str, optional
         For vector ``occurrence`` products, the Fire Radiative Power column.
+    band : int, optional
+        1-based band to select from a multi-band raster before applying the
+        burn/value predicate (e.g. FireCCI51 exports a 4-band stack whose first
+        band is ``BurnDate``). ``None`` (the default) means the file is
+        single-band and the lone band is squeezed out.
     native_crs : str, optional
         Documentation only; the actual CRS is read from each file.
     """
@@ -99,6 +104,7 @@ class ProductSpec:
     value_predicate: Optional[Callable[[xr.DataArray], xr.DataArray]] = None
     date_field: Optional[str] = None
     frp_field: Optional[str] = None
+    band: Optional[int] = None
     native_crs: Optional[str] = None
 
     @property
@@ -207,8 +213,10 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         glob="firecci51_*_nc.tif",
         year_parser=_second_token_year,
         month_parser=_second_token_month,
-        # GEE FireCCI51 'BurnDate' band: 1-366 burned, 0 unburned, -1/-2 unobserved.
-        burn_predicate=lambda da: da > 0,  # CONFIRM BAND: assumes BurnDate exported
+        # GEE export is a 4-band stack (BurnDate, ConfidenceLevel, LandCover,
+        # ObservedFlag); band 1 = BurnDate, 1-366 burned, 0 unburned, -1/-2 unobserved.
+        band=1,
+        burn_predicate=lambda da: da > 0,
         native_crs="EPSG:4326",
     ),
     "FireCCIS311": ProductSpec(
@@ -265,7 +273,10 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         glob="MOSEV_*_nc.tif",
         year_parser=_modis_a_year,
         month_parser=_modis_a_month,
-        value_predicate=lambda da: da,  # CONFIRM BAND: dNBR / RdNBR / post-NBR
+        # processed tifs keep all 7 MOSEV bands (1 dNBR, 2 RdNBR, 3 pre-NBR,
+        # 4 post-NBR, 5 pre-date, 6 post-date, 7 MCD64A1 burn date); band 1 = dNBR.
+        band=1,
+        value_predicate=lambda da: da,
         native_crs="Sinusoidal",
     ),
     "MTBS": ProductSpec(
@@ -328,8 +339,15 @@ def list_products(family: Optional[str] = None) -> list[str]:
 # Rasters are squeezed to 2D (drop the singleton band) so the burn/value
 # predicates and the common-grid step work on (y, x) arrays.
 # ---------------------------------------------------------------------------
-def _clip_raster(path: Path, aoi: gpd.GeoDataFrame) -> xr.DataArray:
-    return clip_raster_to_mask(path, aoi).squeeze("band", drop=True)
+def _clip_raster(
+    path: Path, aoi: gpd.GeoDataFrame, band: Optional[int] = None
+) -> xr.DataArray:
+    da = clip_raster_to_mask(path, aoi)
+    if band is not None:
+        # multi-band file (e.g. FireCCI51's BurnDate/ConfidenceLevel/...): pick
+        # the requested 1-based band and drop the band coordinate.
+        return da.sel(band=band, drop=True)
+    return da.squeeze("band", drop=True)
 
 
 def _clip_vector(path: Path, aoi: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -395,7 +413,7 @@ def load_binary_annual(
 
     masks = []
     for f in files:
-        clipped = _clip_raster(f, aoi)
+        clipped = _clip_raster(f, aoi, spec.band)
         masks.append(spec.burn_predicate(clipped))
 
     if len(masks) == 1:
@@ -424,7 +442,7 @@ def load_continuous_annual(
     if not files:
         return None
 
-    vals = [spec.value_predicate(_clip_raster(f, aoi)) for f in files]
+    vals = [spec.value_predicate(_clip_raster(f, aoi, spec.band)) for f in files]
     if len(vals) == 1:
         annual = vals[0]
     else:
