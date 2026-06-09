@@ -339,6 +339,117 @@ def _corr_score(a: np.ndarray, b: np.ndarray, method: str) -> float:
     raise ValueError(f"Unknown correlation method {method!r}.")
 
 
+def total_least_squares(x, y) -> tuple[float, float]:
+    """Total least squares (orthogonal) regression of ``y`` on ``x``.
+
+    Unlike ordinary least squares (which minimises *vertical* distance and
+    assumes ``x`` is error-free), TLS minimises the *perpendicular* distance to
+    the line -- the right choice when both products carry measurement error, as
+    in Humber et al. (2019). Returns ``(slope, intercept)``.
+
+    Note the fit is symmetric only up to reflection: swapping x and y gives the
+    reciprocal slope (the same line reflected across y=x).
+    """
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    if x.size < 2:
+        return (np.nan, np.nan)
+    xb, yb = x.mean(), y.mean()
+    dx, dy = x - xb, y - yb
+    sxx = np.mean(dx * dx)
+    syy = np.mean(dy * dy)
+    sxy = np.mean(dx * dy)
+    if sxy == 0:
+        return (np.nan, np.nan)
+    slope = (syy - sxx + np.sqrt((syy - sxx) ** 2 + 4 * sxy ** 2)) / (2 * sxy)
+    intercept = yb - slope * xb
+    return (float(slope), float(intercept))
+
+
+def rmse(x, y) -> float:
+    """Root-mean-square error between two products (symmetric; 0 = identical).
+
+    Humber reports this alongside the TLS line, compared against the y=x line.
+    """
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    m = np.isfinite(x) & np.isfinite(y)
+    if m.sum() == 0:
+        return np.nan
+    return float(np.sqrt(np.mean((x[m] - y[m]) ** 2)))
+
+
+# methods whose scoring is on continuous values (not binary masks)
+_CONTINUOUS_METHODS = ("pearson", "spearman", "tls_slope", "rmse")
+
+
+def _ordered_score(x: np.ndarray, y: np.ndarray, method: str, same: bool) -> float:
+    """Score one ordered pair (x as predictor, y as response).
+
+    Symmetric methods ignore the ordering; ``tls_slope`` does not. ``same`` marks
+    the diagonal (a product vs itself) so it gets the natural identity value.
+    """
+    if method in ("jaccard", "iou", "kappa", "percent_agreement"):
+        return 1.0 if same else _binary_scores(x, y, method)
+    if method in ("pearson", "spearman"):
+        return 1.0 if same else _corr_score(x, y, method)
+    if method == "tls_slope":
+        return 1.0 if same else total_least_squares(x, y)[0]
+    if method == "rmse":
+        return 0.0 if same else rmse(x, y)
+    raise ValueError(f"Unknown method {method!r}.")
+
+
+def period_totals_series(
+    products: Iterable[str],
+    years: Iterable[int],
+    aoi: gpd.GeoDataFrame,
+    temporal_unit: str = "year",
+    common_grid_res: float = 500.0,
+) -> pd.DataFrame:
+    """Per-period total for each product, indexed by period.
+
+    Burned-area products contribute their **common-grid burned area (km^2)**;
+    occurrence products (VIIRS) contribute their **active-fire detection count**.
+    Including counts lets active fire join the temporal scatter / correlation /
+    TLS against the burned-area products, the quantitative analogue of Humber's
+    temporal heat maps. (Severity products are skipped -- they have no scalar
+    total.) Units differ by column, which is fine for correlation/TLS but means
+    RMSE across families is not meaningful.
+    """
+    periods = _expand_periods(years, temporal_unit)
+    grid = build_common_grid(aoi, res_m=common_grid_res)
+    rows: dict = {_period_label(y, m): {} for (y, m) in periods}
+    for product in products:
+        spec = get_spec(product)
+        if spec.family == "severity":
+            continue
+        if temporal_unit == "month" and not _monthly_capable(product):
+            continue
+        has_files = bool(_files_for_period(get_spec(product), periods[0][0])) or \
+            spec.directory.exists()
+        if not has_files:
+            continue
+        for year, month in periods:
+            label = _period_label(year, month)
+            if spec.family == "occurrence":
+                pts = load_points(product, year, aoi, month)
+                rows[label][product] = 0 if pts is None else int(len(pts))
+            else:  # burned_area
+                mask = load_standardized(product, year, aoi, month)
+                if mask is None:
+                    continue
+                mask = to_common_grid(mask.astype("float32"), grid, how="max") > 0
+                mask = mask.rio.write_crs(grid.rio.crs)
+                rows[label][product] = burned_area_km2(mask)
+
+    df = pd.DataFrame.from_dict(rows, orient="index").sort_index()
+    df.index.name = "period" if temporal_unit == "month" else "year"
+    return df
+
+
 def agreement_matrix(
     products: Iterable[str],
     years: Iterable[int],
@@ -348,20 +459,22 @@ def agreement_matrix(
     pooling: str = "cells",
     temporal_unit: str = "year",
 ) -> pd.DataFrame:
-    """Pairwise agreement among products as a symmetric DataFrame.
+    """Pairwise agreement among products as a products x products DataFrame.
 
     Parameters
     ----------
     method : str
-        ``"jaccard"``/``"iou"``, ``"kappa"``, ``"percent_agreement"`` operate on
-        binary burned masks. ``"pearson"``/``"spearman"`` operate on continuous
-        values (severity grids when ``pooling="cells"``, or per-period totals when
-        ``pooling="years"``).
+        Binary-mask methods: ``"jaccard"``/``"iou"``, ``"kappa"``,
+        ``"percent_agreement"``. Continuous methods: ``"pearson"``,
+        ``"spearman"``, ``"tls_slope"`` (total least squares slope), ``"rmse"``.
+        TLS and RMSE follow Humber et al.'s scatterplot statistics; ``tls_slope``
+        near 1 means the two products agree on magnitude, and the matrix is
+        *asymmetric* (entry [a, b] regresses with a as x, b as y).
     pooling : str
-        ``"cells"`` pools all grid cells across every period into paired vectors
-        (spatial agreement -- "do they burn the same places?").
-        ``"years"`` correlates each product's per-period total
-        (temporal co-variation -- "do they rise and fall together?").
+        ``"cells"`` pools all grid cells across every period (spatial agreement
+        -- "do they burn the same places?"). ``"years"`` uses each product's
+        per-period total (temporal co-variation -- "do they rise and fall
+        together?"), and includes occurrence products (VIIRS) via detection count.
     temporal_unit : str
         ``"year"`` (default) compares per year; ``"month"`` compares per calendar
         month and drops annual-only products.
@@ -370,39 +483,63 @@ def agreement_matrix(
     binary = method in ("jaccard", "iou", "kappa", "percent_agreement")
 
     if pooling == "years":
-        # correlate per-period totals; here, burned-area products via common-grid
-        # totals (one value per year, or per month in monthly mode).
-        df = annual_burned_area_series(
-            products, years, aoi, mode="common_grid",
-            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
+        # one value per product per period (BA km^2, or VIIRS detection count)
+        df = period_totals_series(
+            products, years, aoi, temporal_unit=temporal_unit,
+            common_grid_res=common_grid_res,
         )
-        cols = [p for p in products if p in df.columns]
-        return df[cols].corr(method="spearman" if method == "spearman" else "pearson")
+        names = [p for p in products if p in df.columns]
+        vecs = {p: df[p].values.astype("float64") for p in names}
+    else:
+        # pooling == "cells": concatenate flattened cells across all periods
+        periods = _expand_periods(years, temporal_unit)
+        pooled: dict[str, list[np.ndarray]] = {p: [] for p in products}
+        grid = build_common_grid(aoi, res_m=common_grid_res)
+        for year, month in periods:
+            stack = stack_on_common_grid(
+                products, year, aoi, binary=binary, grid=grid, month=month
+            )
+            for p in products:
+                if p in stack:
+                    pooled[p].append(stack[p].values.astype("float64"))
+        vecs = {p: np.concatenate(arrs) for p, arrs in pooled.items() if arrs}
+        names = [p for p in products if p in vecs]
 
-    # pooling == "cells": concatenate flattened cells across all periods
-    periods = _expand_periods(years, temporal_unit)
-    pooled: dict[str, list[np.ndarray]] = {p: [] for p in products}
-    grid = build_common_grid(aoi, res_m=common_grid_res)
-    for year, month in periods:
-        stack = stack_on_common_grid(
-            products, year, aoi, binary=binary, grid=grid, month=month
-        )
-        for p in products:
-            if p in stack:
-                pooled[p].append(stack[p].values.astype("float64"))
-
-    vecs = {
-        p: np.concatenate(arrs) for p, arrs in pooled.items() if arrs
-    }
-    names = [p for p in products if p in vecs]
     mat = pd.DataFrame(index=names, columns=names, dtype="float64")
-    score = _binary_scores if binary else _corr_score
-    for i, a in enumerate(names):
-        for b in names[i:]:
-            val = 1.0 if a == b and binary else score(vecs[a], vecs[b], method)
-            mat.loc[a, b] = val
-            mat.loc[b, a] = val
+    for a in names:
+        for b in names:
+            mat.loc[a, b] = _ordered_score(vecs[a], vecs[b], method, same=(a == b))
     return mat
+
+
+def product_pair_scatter(
+    product_x: str,
+    product_y: str,
+    year: int,
+    aoi: gpd.GeoDataFrame,
+    month: Optional[int] = None,
+    common_grid_res: float = 500.0,
+):
+    """Paired per-cell values for a two-product scatterplot in one period.
+
+    Each point is one common-grid cell -- the per-spatial-unit analogue of
+    Humber's per-TSA scatter points -- holding the *burned fraction* of that cell
+    for each product (continuous in [0, 1]; for VIIRS, detections per cell).
+    Returns ``(x, y)`` 1-D arrays over cells where both products are finite.
+    Feed these to :func:`total_least_squares`, :func:`rmse`, or
+    :func:`peatfire.fire_products_comparison.plot_product_scatter`.
+    """
+    gdf = _as_gdf(aoi)
+    grid = build_common_grid(gdf, res_m=common_grid_res)
+    stack = stack_on_common_grid(
+        [product_x, product_y], year, gdf, binary=False, grid=grid, month=month
+    )
+    if product_x not in stack or product_y not in stack:
+        return (np.array([]), np.array([]))
+    a = stack[product_x].values.ravel()
+    b = stack[product_y].values.ravel()
+    m = np.isfinite(a) & np.isfinite(b)
+    return a[m], b[m]
 
 
 # ---------------------------------------------------------------------------
@@ -478,8 +615,19 @@ def compare_fire_products(
             family_products, years, gdf, mode="common_grid",
             common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
+        # temporal co-variation of per-period totals. Pearson includes VIIRS
+        # (scale-invariant); TLS slope / RMSE compare magnitudes so they stay on
+        # the burned-area products, which share km^2 units.
         results["correlation_years"] = agreement_matrix(
-            family_products, years, gdf, method="pearson", pooling="years",
+            products, years, gdf, method="pearson", pooling="years",
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
+        )
+        results["tls_slope_years"] = agreement_matrix(
+            family_products, years, gdf, method="tls_slope", pooling="years",
+            common_grid_res=common_grid_res, temporal_unit=temporal_unit,
+        )
+        results["rmse_years"] = agreement_matrix(
+            family_products, years, gdf, method="rmse", pooling="years",
             common_grid_res=common_grid_res, temporal_unit=temporal_unit,
         )
         for m in agreement_methods:
