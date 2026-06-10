@@ -267,14 +267,17 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         temporal="annual",
         # notebook clips to a per-year SUB-FOLDER:
         # data/processed/fire/se_firemap/cbi_mosaic_{YYYY}_nc/cbi_mosaic_{YYYY}_nc.tif
+        # USGS SE FireMap = gradient-boosted model predicting CBI burn severity
+        # (0-3) over Landsat burned area, annual 2000-2022.
         root_parts=("processed", "fire", "se_firemap"),
         glob="cbi_mosaic_*_nc/cbi_mosaic_*_nc.tif",
         year_parser=_third_token_year,
-        # cbi_mosaic stores 999 as an undeclared fill sentinel (masked=True misses
-        # it); null it so it doesn't pollute the CBI range. CONFIRM the post-mask
-        # range matches CBI's documented 0-3 (else there is additional scaling).
+        # 999 is an undeclared fill sentinel (masked=True misses it); null it.
         nodata=(999,),
-        value_predicate=lambda da: da,  # continuous CBI
+        # docs say CBI 0-3 but the raster stores CBI x100 (valid max ~193 in NC ->
+        # CBI ~1.9), so divide to recover true CBI units. CONFIRM /100 puts the
+        # map in 0-3. (Scaling does not affect the rank-based Spearman agreement.)
+        value_predicate=lambda da: da / 100.0,
         native_crs="EPSG:5070",
     ),
     "MOSEV": ProductSpec(
