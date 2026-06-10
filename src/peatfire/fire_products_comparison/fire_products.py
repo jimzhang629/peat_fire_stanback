@@ -219,9 +219,7 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         native_res_m=250.0,
         temporal="monthly",
         # download_and_clip_data.ipynb writes FireCCI51 to a firecci51/ sub-folder:
-        # data/processed/fire/firecci51/firecci51_{YYYY}_{MM}_nc.tif. The inventory
-        # CSV lists the bare data/processed/fire/ path, which does not match the
-        # executed download code -- using the sub-folder the files are actually in.
+        # data/processed/fire/firecci51/firecci51_{YYYY}_{MM}_nc.tif.
         root_parts=("processed", "fire", "firecci51"),
         glob="firecci51_*_nc.tif",
         year_parser=_second_token_year,
@@ -428,8 +426,7 @@ def load_binary_annual(
     """Boolean burned mask (``True`` = burned) for one product/year (or month).
 
     With ``month=None`` (default) all of the year's files are OR'd into a single
-    annual mask (a pixel that burned in *any* month counts as burned), mirroring
-    the original sandbox logic. With ``month`` set, only that month's file(s) are
+    annual mask (a pixel that burned in *any* month counts as burned). With ``month`` set, only that month's file(s) are
     loaded (and OR'd, if a month has more than one). The result is clipped to
     ``aoi`` with its native CRS preserved.
 

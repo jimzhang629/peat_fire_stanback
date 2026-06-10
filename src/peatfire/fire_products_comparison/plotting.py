@@ -57,6 +57,7 @@ def plot_annual_series(
     ylabel: str = "Total burned area (km$^2$)",
     title: Optional[str] = None,
     ax: Optional[plt.Axes] = None,
+    legend=True
 ):
     """Recreate Humber et al. Figure 3: a line per product over years.
 
@@ -79,7 +80,8 @@ def plot_annual_series(
     ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
-    ax.legend(title=None)
+    if legend:
+        ax.legend(title=None)
     return fig
 
 
