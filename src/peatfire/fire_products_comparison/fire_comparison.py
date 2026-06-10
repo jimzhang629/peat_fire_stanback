@@ -153,6 +153,7 @@ def _resampling(how: str) -> Resampling:
         "min": Resampling.min,
         "mean": Resampling.average,
         "nearest": Resampling.nearest,
+        "mode": Resampling.mode,  # majority -- for categorical/ordinal layers (MTBS)
     }[how]
 
 
@@ -295,7 +296,9 @@ def stack_on_common_grid(
         da = load_standardized(product, year, aoi, month)
         if da is None:
             continue
-        how = "max" if binary else "mean"
+        # binary presence uses max; continuous uses the product's preferred
+        # resampling (mean for CBI/dNBR, "mode" for MTBS's ordinal classes).
+        how = "max" if binary else (spec.resample or "mean")
         g = to_common_grid(da.astype("float32"), grid, how=how)
         out[product] = (g > 0).astype("float32") if binary else g
     return out

@@ -92,6 +92,13 @@ class ProductSpec:
         nodata is *not* declared in the GeoTIFF (so ``masked=True`` misses it),
         e.g. MOSEV's int16 ``(32767, -32767)`` fill or SE_FireMap's ``999``.
         Leave ``None`` when the file declares its nodata correctly.
+    resample : str, optional
+        How to aggregate this product when warping continuous values onto the
+        common grid: ``None`` (default) uses area ``"mean"`` -- right for
+        continuous severity (CBI, dNBR). Set ``"mode"`` (majority) for
+        categorical/ordinal layers like MTBS classes so a coarse cell keeps a
+        valid class instead of a meaningless fractional average. (Binary masks
+        always use ``"max"`` regardless.)
     native_crs : str, optional
         Documentation only; the actual CRS is read from each file.
     """
@@ -111,6 +118,7 @@ class ProductSpec:
     frp_field: Optional[str] = None
     band: Optional[int] = None
     nodata: Optional[tuple] = None
+    resample: Optional[str] = None
     native_crs: Optional[str] = None
 
     @property
@@ -304,6 +312,9 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         year_parser=_third_token_year,
         # MTBS thematic severity classes (1-6), NOT continuous: CONFIRM handling
         # (treat as classes / remap) before trusting Spearman against CBI/dNBR.
+        # "mode" = majority class when coarsening, so cells stay valid classes
+        # rather than fractional averages.
+        resample="mode",
         value_predicate=lambda da: da,
         native_crs="EPSG:5070",
     ),
