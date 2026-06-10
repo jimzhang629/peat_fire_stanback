@@ -87,6 +87,11 @@ class ProductSpec:
         burn/value predicate (e.g. FireCCI51 exports a 4-band stack whose first
         band is ``BurnDate``). ``None`` (the default) means the file is
         single-band and the lone band is squeezed out.
+    nodata : tuple of float, optional
+        Sentinel fill value(s) to set to ``NaN`` after reading, for files whose
+        nodata is *not* declared in the GeoTIFF (so ``masked=True`` misses it),
+        e.g. MOSEV's int16 ``(32767, -32767)`` fill or SE_FireMap's ``999``.
+        Leave ``None`` when the file declares its nodata correctly.
     native_crs : str, optional
         Documentation only; the actual CRS is read from each file.
     """
@@ -105,6 +110,7 @@ class ProductSpec:
     date_field: Optional[str] = None
     frp_field: Optional[str] = None
     band: Optional[int] = None
+    nodata: Optional[tuple] = None
     native_crs: Optional[str] = None
 
     @property
@@ -258,7 +264,11 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("processed", "fire", "se_firemap"),
         glob="cbi_mosaic_*_nc/cbi_mosaic_*_nc.tif",
         year_parser=_third_token_year,
-        value_predicate=lambda da: da,  # continuous CBI 0-3
+        # cbi_mosaic stores 999 as an undeclared fill sentinel (masked=True misses
+        # it); null it so it doesn't pollute the CBI range. CONFIRM the post-mask
+        # range matches CBI's documented 0-3 (else there is additional scaling).
+        nodata=(999,),
+        value_predicate=lambda da: da,  # continuous CBI
         native_crs="EPSG:5070",
     ),
     "MOSEV": ProductSpec(
@@ -275,6 +285,9 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         # processed tifs keep all 7 MOSEV bands (1 dNBR, 2 RdNBR, 3 pre-NBR,
         # 4 post-NBR, 5 pre-date, 6 post-date, 7 MCD64A1 burn date); band 1 = dNBR.
         band=1,
+        # int16 +/-32767 fill is undeclared; null it (real dNBR is ~ +/-1300,
+        # typically scaled x1000 -- CONFIRM scaling before trusting magnitudes).
+        nodata=(32767, -32767),
         value_predicate=lambda da: da,
         native_crs="Sinusoidal",
     ),
@@ -339,14 +352,23 @@ def list_products(family: Optional[str] = None) -> list[str]:
 # predicates and the common-grid step work on (y, x) arrays.
 # ---------------------------------------------------------------------------
 def _clip_raster(
-    path: Path, aoi: gpd.GeoDataFrame, band: Optional[int] = None
+    path: Path,
+    aoi: gpd.GeoDataFrame,
+    band: Optional[int] = None,
+    nodata: Optional[tuple] = None,
 ) -> xr.DataArray:
     da = clip_raster_to_mask(path, aoi)
     if band is not None:
         # multi-band file (e.g. FireCCI51's BurnDate/ConfidenceLevel/...): pick
         # the requested 1-based band and drop the band coordinate.
-        return da.sel(band=band, drop=True)
-    return da.squeeze("band", drop=True)
+        da = da.sel(band=band, drop=True)
+    else:
+        da = da.squeeze("band", drop=True)
+    if nodata is not None:
+        # null undeclared fill sentinels masked=True can't catch (e.g. MOSEV's
+        # int16 +/-32767, SE_FireMap's 999) so they don't pollute area/severity.
+        da = da.where(~da.isin(list(nodata)))
+    return da
 
 
 def _clip_vector(path: Path, aoi: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -412,7 +434,7 @@ def load_binary_annual(
 
     masks = []
     for f in files:
-        clipped = _clip_raster(f, aoi, spec.band)
+        clipped = _clip_raster(f, aoi, spec.band, spec.nodata)
         masks.append(spec.burn_predicate(clipped))
 
     if len(masks) == 1:
@@ -441,7 +463,10 @@ def load_continuous_annual(
     if not files:
         return None
 
-    vals = [spec.value_predicate(_clip_raster(f, aoi, spec.band)) for f in files]
+    vals = [
+        spec.value_predicate(_clip_raster(f, aoi, spec.band, spec.nodata))
+        for f in files
+    ]
     if len(vals) == 1:
         annual = vals[0]
     else:
