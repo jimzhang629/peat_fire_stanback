@@ -308,10 +308,14 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         root_parts=("raw", "fire", "mtbs"),
         glob="mtbs_NC_*/mtbs_NC_*.tif",
         year_parser=_third_token_year,
-        # MTBS thematic severity classes (1-6), NOT continuous: CONFIRM handling
-        # (treat as classes / remap) before trusting Spearman against CBI/dNBR.
+        # MTBS thematic severity classes: 1 unburned-low, 2 low, 3 moderate,
+        # 4 high, 5 increased greenness, 6 non-mapping area. Class 6 is a mask,
+        # not a severity level -- null it so it cannot be ranked as "most severe".
+        # (Class 5 "increased greenness" is left in; drop it too if undesired.)
+        nodata=(6,),
         # "mode" = majority class when coarsening, so cells stay valid classes
-        # rather than fractional averages.
+        # rather than fractional averages. Confirm class handling before trusting
+        # Spearman against continuous CBI/dNBR.
         resample="mode",
         value_predicate=lambda da: da,
         native_crs="EPSG:5070",
