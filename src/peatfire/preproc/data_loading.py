@@ -95,7 +95,7 @@ def clip_vector_to_mask(vector_path, mask):
     '''
     gdf = gpd.read_file(vector_path)
     mask_in_gdf_crs = mask.to_crs(gdf.crs)
-    gdf_clipped = gpd.sjoin(gdf, mask_in_gdf_crs[['geometry']], predicate='within').drop(columns='index_right')
+    gdf_clipped = gpd.clip(gdf, mask_in_gdf_crs)
     
     return gdf_clipped
 
