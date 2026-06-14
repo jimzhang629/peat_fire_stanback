@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import geopandas as gpd
 import rioxarray
+import xarray as xr
 
 # This file lives at <root>/src/peatfire/preproc/data_loading.py, so the
 # project root is four levels up.
