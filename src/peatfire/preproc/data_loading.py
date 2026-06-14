@@ -78,119 +78,125 @@ def load_csv(*parts: str, **kwargs) -> pd.DataFrame:
     """
     return pd.read_csv(data_path(*parts), **kwargs)
 
-def clip_vector_to_mask(vector_path, mask):
+def _as_gdf(vector):
+    '''Return a GeoDataFrame from either an in-memory GeoDataFrame/GeoSeries or
+    a path to a vector file (read with geopandas.read_file).'''
+    if isinstance(vector, (gpd.GeoDataFrame, gpd.GeoSeries)):
+        return vector
+    return gpd.read_file(vector)
+
+def _as_raster(raster):
+    '''Return a rioxarray DataArray/Dataset from either an in-memory xarray
+    object or a path to a raster file (read with masked=True).'''
+    if isinstance(raster, (xr.DataArray, xr.Dataset)):
+        return raster
+    return rioxarray.open_rasterio(raster, masked=True)
+
+def clip_vector_to_mask(vector, mask):
     '''
-    Clips vector to a mask GeoDataFrame (like nc bounds)
+    Clips vector to a mask (like nc bounds).
 
     Parameters
     ----------
-    vector_path : Path
-        The path to your vector data (will read it in as a GeoDataFrame)
-    mask : GeoDataFrame
-        Your clipping mask GeoDataFrame
+    vector : Path or GeoDataFrame
+        Your vector data, either a path to a vector file (read in as a
+        GeoDataFrame) or an already-loaded GeoDataFrame.
+    mask : Path or GeoDataFrame
+        Your clipping mask, either a path to a vector file or an already-loaded
+        GeoDataFrame.
     Returns
     -------
     gdf_clipped : GeoDataFrame
         Your GeoDataFrame clipped to your mask
     '''
-    gdf = gpd.read_file(vector_path)
-    mask_in_gdf_crs = mask.to_crs(gdf.crs)
+    gdf = _as_gdf(vector)
+    mask_in_gdf_crs = _as_gdf(mask).to_crs(gdf.crs)
     gdf_clipped = gpd.clip(gdf, mask_in_gdf_crs)
-    
+
     return gdf_clipped
 
-def clip_vector_to_mask_and_save(vector_path, mask, out_path):
+def clip_vector_to_mask_and_save(vector, mask, out_path):
     '''
-    Clips vector to a mask GeoDataFrame (like nc bounds) and saves it to out_path.
-    
+    Clips vector to a mask (like nc bounds) and saves it to out_path.
+
     Parameters
     ----------
-    vector_path : Path
-        The path to your vector data (will read it in as a GeoDataFrame)
-    mask : GeoDataFrame
-        Your clipping mask GeoDataFrame
+    vector : Path or GeoDataFrame
+        Your vector data, either a path to a vector file (read in as a
+        GeoDataFrame) or an already-loaded GeoDataFrame.
+    mask : Path or GeoDataFrame
+        Your clipping mask, either a path to a vector file or an already-loaded
+        GeoDataFrame.
     out_path : Path
         The path to where you want to save the clipped GeoDataFrame
-    
+
     Returns
     -------
     gdf_clipped : GeoDataFrame
         Your GeoDataFrame clipped to your mask
     '''
-    gdf_clipped = clip_vector_to_mask(vector_path, mask)
+    gdf_clipped = clip_vector_to_mask(vector, mask)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     gdf_clipped.to_file(out_path, driver='GPKG')
-    
+
     return gdf_clipped
 
-def clip_raster_to_mask(raster_path, mask):
-    '''
-    Clips a raster (e.g., .tif) to a mask GeoDataFrame (like nc bounds)
+
+def clip_raster_to_mask(raster, mask, from_disk=False):
+    '''Clips a raster (e.g., .tif) to a mask (like nc bounds).
 
     Parameters
     ----------
-    raster_path : Path
-        The path to your raster data
-    mask : GeoDataFrame
-        Your clipping mask GeoDataFrame
-    
+    raster : Path or xarray DataArray/Dataset
+        Your raster data, either a path to a raster file (read in with
+        masked=True) or an already-loaded rioxarray object.
+    mask : Path or GeoDataFrame
+        Your clipping mask, either a path to a vector file or an already-loaded
+        GeoDataFrame.
+    from_disk : bool
+        Set from_disk=True for very large rasters (e.g. CONUS-wide) so the
+        clip reads only the needed windows from disk instead of loading the
+        whole array into memory first -- avoids OOM / kernel crashes.
+
     Returns
     -------
-    raster_clipped : xarray Dataset
+    raster_clipped : xarray DataArray/Dataset
         Your raster data clipped to your mask
     '''
-    raster = rioxarray.open_rasterio(raster_path, masked=True)
-    mask_in_raster_crs = mask.to_crs(raster.rio.crs)
-    raster_clipped = raster.rio.clip(mask_in_raster_crs.geometry, mask_in_raster_crs.crs)
-    
+    raster = _as_raster(raster)
+    mask_in_raster_crs = _as_gdf(mask).to_crs(raster.rio.crs)
+    raster_clipped = raster.rio.clip(
+        mask_in_raster_crs.geometry, mask_in_raster_crs.crs, from_disk=from_disk
+    )
     return raster_clipped
 
-def clip_raster_to_mask_and_save(raster_path, mask, out_path):
-    '''
-    Clips a raster (e.g., .tif) to a mask GeoDataFrame (like nc bounds) and saves it to out_path.
-    
-    Parameters
-    ----------
-    raster_path : Path
-        The path to your raster data
-    mask : GeoDataFrame
-        Your clipping mask GeoDataFrame
-    out_path : Path
-        The path to where you want to save the clipped raster
-    
-    Returns
-    -------
-    raster_clipped : xarray Dataset
-        Your raster data clipped to your mask
-    '''
-    
-    raster_clipped = clip_raster_to_mask(raster_path, mask)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    raster_clipped.rio.to_raster(out_path)
-    
-    return raster_clipped
 
-def clip_raster_to_mask_and_save(raster_path, mask, out_path):
+def clip_raster_to_mask_and_save(raster, mask, out_path, from_disk=False):
     '''
-    Clips a raster (e.g., .tif) to a mask GeoDataFrame (like nc bounds) and saves it to out_path.
+    Clips a raster (e.g., .tif) to a mask (like nc bounds) and saves it to out_path.
 
     Parameters
     ----------
-    raster_path : Path
-        The path to your raster data
-    mask : GeoDataFrame
-        Your clipping mask GeoDataFrame
+    raster : Path or xarray DataArray/Dataset
+        Your raster data, either a path to a raster file (read in with
+        masked=True) or an already-loaded rioxarray object.
+    mask : Path or GeoDataFrame
+        Your clipping mask, either a path to a vector file or an already-loaded
+        GeoDataFrame.
     out_path : Path
         The path to where you want to save the clipped raster
+    from_disk : bool
+        Set from_disk=True for very large rasters (e.g. CONUS-wide) so the
+        clip reads only the needed windows from disk instead of loading the
+        whole array into memory first -- avoids OOM / kernel crashes.
 
     Returns
     -------
-    raster_clipped : xarray Dataset
+    raster_clipped : xarray DataArray/Dataset
         Your raster data clipped to your mask
     '''
-
-    raster_clipped = clip_raster_to_mask(raster_path, mask)
+    raster_clipped = clip_raster_to_mask(raster, mask, from_disk=from_disk)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raster_clipped.rio.to_raster(out_path)
 
