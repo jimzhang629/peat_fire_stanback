@@ -52,12 +52,27 @@ try:  # optional geospatial API
         stack_on_common_grid,
         total_least_squares,
     )
+    from .fire_products_comparison.reference_sources import (
+        REFERENCE_SOURCES,
+        get_reference,
+        list_references,
+        load_reference,
+        reference_event_table,
+    )
+    from .fire_products_comparison.validation import (
+        confusion_scores,
+        recall_matrix,
+        summarize_validation,
+        validate_event,
+        validate_products,
+    )
     from .fire_products_comparison.plotting import (
         plot_agreement_heatmap,
         plot_annual_series,
         plot_overlay_map,
         plot_product_scatter,
         plot_temporal_heatmap,
+        plot_validation_heatmap,
         set_fire_style,
     )
 
@@ -78,11 +93,22 @@ try:  # optional geospatial API
         "rmse",
         "stack_on_common_grid",
         "total_least_squares",
+        "REFERENCE_SOURCES",
+        "get_reference",
+        "list_references",
+        "load_reference",
+        "reference_event_table",
+        "confusion_scores",
+        "recall_matrix",
+        "summarize_validation",
+        "validate_event",
+        "validate_products",
         "plot_agreement_heatmap",
         "plot_annual_series",
         "plot_overlay_map",
         "plot_product_scatter",
         "plot_temporal_heatmap",
+        "plot_validation_heatmap",
         "set_fire_style",
     ]
 except ImportError:

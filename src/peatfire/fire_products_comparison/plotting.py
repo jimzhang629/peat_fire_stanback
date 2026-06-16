@@ -390,3 +390,53 @@ def plot_consensus_map(
     )
     cbar.set_label("Number of products mapping burn")
     return fig
+
+
+def plot_validation_heatmap(
+    matrix: pd.DataFrame,
+    title: Optional[str] = None,
+    cmap: str = "viridis",
+    vmin: float = 0.0,
+    vmax: float = 1.0,
+    cbar_label: str = "recall (1 - omission)",
+    ax: Optional[plt.Axes] = None,
+):
+    """Heatmap of an events x products validation matrix (rows = reference fires).
+
+    ``matrix`` comes from
+    :func:`peatfire.fire_products_comparison.recall_matrix` -- one row per
+    reference incident (e.g. Pains Bay 2011), one column per product, cells
+    holding recall (or precision, etc.). Unlike
+    :func:`plot_agreement_heatmap` this is rectangular and the axes are not
+    symmetric, so each named fire's per-product strength reads off down a row.
+    """
+    set_fire_style()
+    if ax is None:
+        fig, ax = plt.subplots(
+            figsize=(1.1 * len(matrix.columns) + 2, 0.45 * len(matrix.index) + 2)
+        )
+    else:
+        fig = ax.figure
+
+    data = matrix.values.astype(float)
+    im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
+    ax.set_xticks(range(len(matrix.columns)))
+    ax.set_yticks(range(len(matrix.index)))
+    ax.set_xticklabels(matrix.columns, rotation=45, ha="right")
+    ax.set_yticklabels(matrix.index)
+    mid = (vmin + vmax) / 2
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            val = data[i, j]
+            if np.isfinite(val):
+                ax.text(
+                    j, i, f"{val:.2f}", ha="center", va="center",
+                    color="white" if val < mid else "black", fontsize=9,
+                )
+    if title:
+        ax.set_title(title)
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label(cbar_label)
+    for s in ax.spines.values():
+        s.set_visible(True)
+    return fig
