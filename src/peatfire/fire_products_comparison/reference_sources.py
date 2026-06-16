@@ -162,13 +162,6 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     "TNC_SANDHILLS": ReferenceSpec(
         name="TNC_SANDHILLS",
         kind="perimeter",
-        root_parts=("processed", "fire", "reference", "tnc_burns"),
-        glob="tnc_burns_*.gpkg",
-        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate"),
-        year_fields=("Year", "BurnYear", "FY"),
-        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME"),
-        area_fields=("Acres", "GIS_ACRES", "ACRES"),
-        native_crs="EPSG:4326",
         root_parts=("processed", "fire", "reference", "tnc_sandhills"),
         glob="tnc_sandhills_*.gpkg",
         date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
