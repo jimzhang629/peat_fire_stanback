@@ -16,7 +16,7 @@ log each methodological choice
   matched GABAM onto MODIS's native grid, which privileged one product; the
   toolkit matches every product onto a single product-independent grid instead.
 
-- **Resolution confound (supervisor's question): partially valid.** A coarse
+- **Resolution confound: partially valid.** A coarse
   burned pixel attributes its whole large area as burned (mixed-pixel commission
   -> inflation per detection), but coarse products also omit small fires
   entirely. In small-fire landscapes (NC pocosins) omission usually dominates,

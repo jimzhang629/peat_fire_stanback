@@ -156,31 +156,30 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     # Margaret's two TNC programs arrive as shapefiles
     # (TNC_NC_Sandhills_Fire_History_2025.shp,
     #  TNC_NC_Coastal_Plain_Fire_History_2025.shp); clip each to a processed gpkg.
-    # Field names confirmed from the shapefiles. The two files differ slightly:
-    # Sandhills has YEAR + MONTH columns; Coastal Plain has Year (different case)
-    # and no MONTH, so its month is parsed from START_DATE. The candidate lists
-    # below cover both casings, so the same shape of spec works for either.
+    # NOTE: the *_fields candidate lists below are best-guess until the shapefile
+    # columns are confirmed -- shapefiles also truncate field names to 10 chars,
+    # so verify and extend these tuples (one-line change, no logic touched).
     "TNC_SANDHILLS": ReferenceSpec(
         name="TNC_SANDHILLS",
         kind="perimeter",
         root_parts=("processed", "fire", "reference", "tnc_sandhills"),
         glob="tnc_sandhills_*.gpkg",
-        date_fields=("START_DATE", "END_DATE"),
-        year_fields=("YEAR", "Year"),
-        event_fields=("BURN_UNIT", "PRESERVE"),
-        area_fields=("ACREAGE",),
-        native_crs="EPSG:3857",  # ArcGIS/Web Mercator; reprojected to 5070 for analysis
+        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
+        year_fields=("Year", "BurnYear", "FY", "FireYear"),
+        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
+        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
+        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
     ),
     "TNC_COASTAL_PLAIN": ReferenceSpec(
         name="TNC_COASTAL_PLAIN",
         kind="perimeter",
         root_parts=("processed", "fire", "reference", "tnc_coastal_plain"),
         glob="tnc_coastal_plain_*.gpkg",
-        date_fields=("START_DATE", "END_DATE"),
-        year_fields=("YEAR", "Year"),
-        event_fields=("BURN_UNIT", "PRESERVE"),
-        area_fields=("ACREAGE",),
-        native_crs="EPSG:3857",  # ArcGIS/Web Mercator; reprojected to 5070 for analysis
+        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
+        year_fields=("Year", "BurnYear", "FY", "FireYear"),
+        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
+        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
+        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
     ),
     "NCWRC_RX": ReferenceSpec(
         name="NCWRC_RX",
