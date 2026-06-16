@@ -164,23 +164,24 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         kind="perimeter",
         root_parts=("processed", "fire", "reference", "tnc_sandhills"),
         glob="tnc_sandhills_*.gpkg",
-        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
-        year_fields=("Year", "BurnYear", "FY", "FireYear"),
-        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
-        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
-        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
+        date_fields=("START_DATE", "END_DATE"),
+        year_fields=("YEAR", "Year"),
+        event_fields=("BURN_UNIT", "PRESERVE"),
+        area_fields=("ACREAGE",),
+        native_crs="EPSG:3857",  # ArcGIS/Web Mercator; reprojected to 5070 for analysis
     ),
     "TNC_COASTAL_PLAIN": ReferenceSpec(
         name="TNC_COASTAL_PLAIN",
         kind="perimeter",
         root_parts=("processed", "fire", "reference", "tnc_coastal_plain"),
         glob="tnc_coastal_plain_*.gpkg",
-        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
-        year_fields=("Year", "BurnYear", "FY", "FireYear"),
-        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
-        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
-        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
+        date_fields=("START_DATE", "END_DATE"),
+        year_fields=("YEAR", "Year"),
+        event_fields=("BURN_UNIT", "PRESERVE"),
+        area_fields=("ACREAGE",),
+        native_crs="EPSG:3857",  # ArcGIS/Web Mercator; reprojected to 5070 for analysis
     ),
+    
     "NCWRC_RX": ReferenceSpec(
         name="NCWRC_RX",
         kind="perimeter",
