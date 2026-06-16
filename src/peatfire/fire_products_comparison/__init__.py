@@ -25,10 +25,26 @@ from .fire_comparison import (
     period_totals_series,
     product_pair_scatter,
     rasterize_points_to_grid,
+    rasterize_polygons_to_grid,
     rmse,
     stack_on_common_grid,
     to_common_grid,
     total_least_squares,
+)
+from .reference_sources import (
+    REFERENCE_SOURCES,
+    ReferenceSpec,
+    get_reference,
+    list_references,
+    load_reference,
+    reference_event_table,
+)
+from .validation import (
+    confusion_scores,
+    recall_matrix,
+    summarize_validation,
+    validate_event,
+    validate_products,
 )
 from .plotting import (
     plot_agreement_heatmap,
@@ -37,6 +53,7 @@ from .plotting import (
     plot_overlay_map,
     plot_product_scatter,
     plot_temporal_heatmap,
+    plot_validation_heatmap,
     set_fire_style,
 )
 
@@ -55,15 +72,28 @@ __all__ = [
     "period_totals_series",
     "product_pair_scatter",
     "rasterize_points_to_grid",
+    "rasterize_polygons_to_grid",
     "rmse",
     "stack_on_common_grid",
     "to_common_grid",
     "total_least_squares",
+    "REFERENCE_SOURCES",
+    "ReferenceSpec",
+    "get_reference",
+    "list_references",
+    "load_reference",
+    "reference_event_table",
+    "confusion_scores",
+    "recall_matrix",
+    "summarize_validation",
+    "validate_event",
+    "validate_products",
     "plot_agreement_heatmap",
     "plot_annual_series",
     "plot_consensus_map",
     "plot_overlay_map",
     "plot_product_scatter",
     "plot_temporal_heatmap",
+    "plot_validation_heatmap",
     "set_fire_style",
 ]

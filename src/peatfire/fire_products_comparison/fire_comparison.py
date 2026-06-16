@@ -204,6 +204,41 @@ def rasterize_points_to_grid(
     return out.rio.write_crs(crs)
 
 
+def rasterize_polygons_to_grid(
+    polys: gpd.GeoDataFrame, grid: xr.DataArray, all_touched: bool = True
+) -> xr.DataArray:
+    """Burn polygon geometries onto ``grid`` as a 0/1 mask (1 = covered).
+
+    Used to turn reference fire *perimeters* (NIFC, TNC, NCWRC) into a burned mask
+    on the same common grid as the products, so a product can be scored against
+    them. ``all_touched=True`` lights a cell if a perimeter touches *any* part of
+    it -- the same "any sub-cell burn lights the cell" convention the binary
+    product masks use (``how="max"``), so small reference fires are not lost to
+    the grid and the reference is the generous (upper-bound) truth boundary.
+    """
+    from rasterio.features import rasterize
+
+    crs = grid.rio.crs
+    polys = polys.to_crs(crs)
+    out_shape = (grid.sizes["y"], grid.sizes["x"])
+    geoms = [g for g in polys.geometry if g is not None and not g.is_empty]
+    if not geoms:
+        arr = np.zeros(out_shape, dtype="float32")
+    else:
+        arr = rasterize(
+            ((g, 1) for g in geoms),
+            out_shape=out_shape,
+            transform=grid.rio.transform(),
+            fill=0,
+            all_touched=all_touched,
+            dtype="float32",
+        )
+    out = xr.DataArray(
+        arr, coords={"y": grid["y"].values, "x": grid["x"].values}, dims=("y", "x")
+    )
+    return out.rio.write_crs(crs)
+
+
 # ---------------------------------------------------------------------------
 # Annual time series (native AND common-grid)
 # ---------------------------------------------------------------------------

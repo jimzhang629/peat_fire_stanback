@@ -68,3 +68,52 @@ log each methodological choice
   BA products -- the quantitative analogue of Humber's temporal heat maps.
   Pearson (scale-invariant) includes VIIRS; TLS slope / RMSE on totals stay on
   the BA products (shared km^2 units).
+
+## Ground-truth validation toolkit (reference_sources.py, validation.py)
+
+- **References are a *separate* registry from the products under test**
+  (`REFERENCE_SOURCES` vs `FIRE_PRODUCTS`). A reference (NIFC perimeters, TNC
+  preserve burns, NCWRC Rx) is *truth within its own footprint* but **not a
+  spatially-exhaustive census** of all landscape fire, so it cannot play the
+  symmetric role a product does. Keeping it apart encodes that asymmetry.
+
+- **Recall (1 - omission) is the headline metric; precision is conditional.**
+  Of a reference perimeter's burned cells, recall = the fraction a product also
+  maps -- clean, because we are confident a fire occurred inside the perimeter.
+  Precision (product burns falling inside the perimeter) is reported **only
+  per-event inside a buffered window** (default 5 km), and flagged conditional,
+  because (1) a product burn outside an *incomplete* reference may be a real
+  small fire, not a false alarm, so global precision is meaningless; and (2) a
+  perimeter is an *outer boundary* with unburned islands, so it overestimates
+  truth -- an upper bound that depresses precision and inflates omission.
+
+- **Time-matched, per-event -- never a timeless union.** Each incident is scored
+  against the product layer for its own year (annual matching by default, so a
+  product is not penalised for sub-monthly timing), via `validate_event`. Events
+  are kept distinct (not dissolved across years), so a detection in one year
+  cannot "catch" a fire in another. `summarize_validation` then offers both a
+  cell-weighted `recall_pooled` (dominated by big fires -- "what fraction of
+  burned *area* was seen?") and `recall_mean_event` (each fire once -- surfaces
+  small-fire omission).
+
+- **Occurrence products judged at the event level.** Active fire (VIIRS) detects
+  a burning front, not burned area, so per-cell recall is the wrong question;
+  `detected` (any overlap with the perimeter) is the meaningful one. VIIRS is
+  2012+, so it is simply absent (skipped) for the older incidents -- not 0.
+
+- **Perimeters rasterised with `all_touched=True`** (`rasterize_polygons_to_grid`),
+  matching the products' "any sub-cell burn lights the cell" (`how="max"`)
+  convention, so small reference fires survive the 500 m grid and the reference
+  stays the generous (upper-bound) truth boundary.
+
+- **Severity is *not* validated against perimeters** (they carry no severity and
+  we have no field CBI). Perimeters instead *restrict* the severity
+  cross-comparison (SE FireMap vs MOSEV vs MTBS) to cells where a fire is known
+  to have occurred, removing unburned-background noise. MTBS itself straddles
+  product and reference (QA'd Landsat severity for >=500-ac eastern fires).
+
+- **Two NIFC sources, not pooled.** `NIFC_IFPH` (Interagency Fire Perimeter
+  History, long record, authoritative) is the default; `GEOMAC` (Historic
+  Perimeters 2000-2018) overlaps it and is a *cross-check*, not a pool partner --
+  the same fire is in both, so pooling double-counts. Different attribute schemas
+  (upper- vs lower-case) are handled by per-role candidate-column lists per spec.
