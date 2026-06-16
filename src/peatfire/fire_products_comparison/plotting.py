@@ -294,7 +294,24 @@ def plot_overlay_map(
         cat_ma, extent=[left, right, bottom, top], origin="upper",
         cmap=OVERLAY_CMAP, vmin=1, vmax=3, interpolation="nearest",
     )
-    aoi_gdf.to_crs(a.rio.crs).boundary.plot(ax=ax, color="black", linewidth=0.8)
+    # Burned cells are 500 m and sparse (often a few hundred) across a swath
+    # hundreds of km wide, so on the full-extent imshow each cell is sub-pixel
+    # and antialiasing blends it away. Overlay the burned cells as fixed *pixel*
+    # size markers so they stay visible regardless of geographic scale/zoom.
+    rows, cols = np.where(cat > 0)
+    if rows.size:
+        res_x = (right - left) / cat.shape[1]
+        res_y = (top - bottom) / cat.shape[0]
+        cx = left + (cols + 0.5) * res_x
+        cy = top - (rows + 0.5) * res_y
+        cell_colours = np.array(OVERLAY_CMAP.colors)[cat[rows, cols] - 1]
+        ax.scatter(cx, cy, c=cell_colours, s=10, marker="s", linewidths=0)
+    # dissolve to the outer outline and keep it thin/translucent: the raw peat
+    # AOI is thousands of intricate polygons whose boundaries otherwise render
+    # as a black mesh that buries the coloured cells.
+    aoi_gdf.to_crs(a.rio.crs).dissolve().boundary.plot(
+        ax=ax, color="black", linewidth=0.4, alpha=0.5,
+    )
     # pin to the full raster extent (geopandas autoscales to the tighter AOI
     # bbox, which clips the boundary); equal aspect avoids distortion.
     ax.set_xlim(left, right)
