@@ -14,8 +14,10 @@ Currently registered (all vector):
 * ``GEOMAC`` -- NIFC Historic GeoMAC Perimeters Combined 2000-2018. Overlaps
   IFPH over 2000-2018, so it is a *cross-check* on those years, not a source to
   pool with IFPH (the same fire appears in both -- pooling double-counts it).
-* ``TNC_BURNS`` -- TNC south-east coastal-plain / Sandhills preserve burn
-  history (smaller controlled burns -- a stress test of small-fire omission).
+* ``TNC_SANDHILLS`` -- TNC NC Sandhills program preserve burn history (longleaf
+  uplands; smaller controlled burns -- a stress test of small-fire omission).
+* ``TNC_COASTAL_PLAIN`` -- TNC NC Coastal Plain program preserve burn history
+  (the peat-relevant program: pocosin / wet-pine burns).
 * ``NCWRC_RX`` -- NC Wildlife Resources Commission prescribed-fire footprints
   (recent only; another small-fire reference).
 
@@ -151,16 +153,33 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         area_fields=("gisacres", "acres"),
         native_crs="EPSG:3857",  # ArcGIS Hub export is Web Mercator; reprojected to 5070 for analysis
     ),
-    "TNC_BURNS": ReferenceSpec(
-        name="TNC_BURNS",
+    # Margaret's two TNC programs arrive as shapefiles
+    # (TNC_NC_Sandhills_Fire_History_2025.shp,
+    #  TNC_NC_Coastal_Plain_Fire_History_2025.shp); clip each to a processed gpkg.
+    # NOTE: the *_fields candidate lists below are best-guess until the shapefile
+    # columns are confirmed -- shapefiles also truncate field names to 10 chars,
+    # so verify and extend these tuples (one-line change, no logic touched).
+    "TNC_SANDHILLS": ReferenceSpec(
+        name="TNC_SANDHILLS",
         kind="perimeter",
-        root_parts=("processed", "fire", "reference", "tnc_burns"),
-        glob="tnc_burns_*.gpkg",
-        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate"),
-        year_fields=("Year", "BurnYear", "FY"),
-        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME"),
-        area_fields=("Acres", "GIS_ACRES", "ACRES"),
-        native_crs="EPSG:4326",
+        root_parts=("processed", "fire", "reference", "tnc_sandhills"),
+        glob="tnc_sandhills_*.gpkg",
+        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
+        year_fields=("Year", "BurnYear", "FY", "FireYear"),
+        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
+        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
+        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
+    ),
+    "TNC_COASTAL_PLAIN": ReferenceSpec(
+        name="TNC_COASTAL_PLAIN",
+        kind="perimeter",
+        root_parts=("processed", "fire", "reference", "tnc_coastal_plain"),
+        glob="tnc_coastal_plain_*.gpkg",
+        date_fields=("BurnDate", "Burn_Date", "DATE", "FireDate", "Date"),
+        year_fields=("Year", "BurnYear", "FY", "FireYear"),
+        event_fields=("Name", "BurnUnit", "Unit", "Preserve", "BURN_NAME", "UnitName"),
+        area_fields=("Acres", "GIS_ACRES", "ACRES", "Acreage"),
+        native_crs=None,  # read from the shapefile (often NC State Plane / NAD83)
     ),
     "NCWRC_RX": ReferenceSpec(
         name="NCWRC_RX",
