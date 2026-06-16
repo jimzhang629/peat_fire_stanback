@@ -378,6 +378,12 @@ def _clip_raster(
         # multi-band file (e.g. FireCCI51's BurnDate/ConfidenceLevel/...): pick
         # the requested 1-based band and drop the band coordinate.
         da = da.sel(band=band, drop=True)
+        # rioxarray keeps ``long_name`` as the *whole* per-band tuple, so the
+        # slice still carries every band's name and xarray auto-labels plots
+        # (e.g. MOSEV's colourbar) with the wrong one. Prune it to the band kept.
+        ln = da.attrs.get("long_name")
+        if isinstance(ln, (list, tuple)) and len(ln) >= band:
+            da.attrs["long_name"] = ln[band - 1]
     else:
         da = da.squeeze("band", drop=True)
     if nodata is not None:

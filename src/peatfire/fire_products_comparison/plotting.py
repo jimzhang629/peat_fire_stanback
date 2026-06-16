@@ -14,7 +14,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
 from matplotlib.patches import Patch
 
 from .fire_comparison import rmse, total_least_squares
@@ -328,6 +328,97 @@ def plot_overlay_map(
         ],
         loc="lower left",
     )
+    return fig
+
+
+def plot_raster_map(
+    da,
+    aoi_gdf,
+    title: str = "",
+    label: Optional[str] = None,
+    aoi_context=None,
+    cmap: str = "magma",
+    robust: bool = True,
+    markers: bool = True,
+    marker_size: float = 12,
+    ax: Optional[plt.Axes] = None,
+):
+    """Single-product raster map on the common grid, with the recurring map traps handled.
+
+    Draws a continuous/count ``da`` (severity, VIIRS detection counts, ...) on the
+    EPSG:5070 common grid over ``aoi_gdf``, masking unburned (``<= 0``) cells. Bakes
+    in the fixes worked out for the fire maps so notebook cells stay one-liners:
+
+    * the AOI is **dissolved** to a single outer outline -- the raw peat extent is
+      thousands of polygons whose boundaries otherwise composite into a black mesh
+      that buries the data;
+    * burned cells are also drawn as fixed **pixel-size markers** so sparse 500 m
+      cells survive ``imshow`` downsampling to screen resolution instead of being
+      antialiased away;
+    * an optional ``aoi_context`` outline (e.g. the NC state boundary) is drawn on
+      top, then the view is pinned back to the raster extent so geopandas' autoscale
+      cannot zoom the map out to the context bounds.
+
+    ``robust`` matches xarray's option (2nd/98th percentile colour limits), shared by
+    the raster and the markers so they read on one colourbar.
+    """
+    set_fire_style()
+    crs = da.rio.crs
+    left, bottom, right, top = da.rio.bounds()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(9, 6))
+    else:
+        fig = ax.figure
+
+    vals = da.values
+    burned = np.isfinite(vals) & (vals > 0)
+    pos = vals[burned]
+    if pos.size and robust:
+        vmin, vmax = (float(x) for x in np.nanpercentile(pos, [2, 98]))
+    elif pos.size:
+        vmin, vmax = float(pos.min()), float(pos.max())
+    else:
+        vmin, vmax = 0.0, 1.0
+    if vmin == vmax:
+        vmax = vmin + 1.0
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # AOI outline first (dissolved, thin) so it sits under the data.
+    aoi_gdf.to_crs(crs).dissolve().boundary.plot(
+        ax=ax, color="black", linewidth=0.6, alpha=0.5, zorder=1
+    )
+
+    masked = np.where(burned, vals, np.nan)
+    mappable = ax.imshow(
+        masked, extent=[left, right, bottom, top], origin="upper",
+        cmap=cmap, norm=norm, interpolation="nearest", zorder=2,
+    )
+    if markers and pos.size:
+        rows, cols = np.where(burned)
+        cx = left + (cols + 0.5) * (right - left) / vals.shape[1]
+        cy = top - (rows + 0.5) * (top - bottom) / vals.shape[0]
+        mappable = ax.scatter(
+            cx, cy, c=vals[rows, cols], cmap=cmap, norm=norm,
+            s=marker_size, marker="s", linewidths=0, zorder=3,
+        )
+
+    # context outline (e.g. NC) on top; pin limits afterwards so the geopandas
+    # autoscale here -- and from the dissolve above -- cannot move the view.
+    if aoi_context is not None:
+        aoi_context.to_crs(crs).boundary.plot(
+            ax=ax, color="0.4", linewidth=0.8, zorder=5
+        )
+    ax.set_xlim(left, right)
+    ax.set_ylim(bottom, top)
+    ax.set_aspect("equal")
+    ax.set_title(title)
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+
+    default_label = da.attrs.get("long_name")
+    if not isinstance(default_label, str):
+        default_label = da.name
+    fig.colorbar(mappable, ax=ax, label=label or default_label or "")
     return fig
 
 
