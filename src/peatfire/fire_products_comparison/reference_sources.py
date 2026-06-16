@@ -126,12 +126,13 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         # clip to NC + standardise filename into the reference folder.
         root_parts=("processed", "fire", "reference", "nifc_ifph"),
         glob="nifc_ifph_*.gpkg",
-        # IFPH carries an integer FIRE_YEAR; DATE_CUR is the "current as of" date.
+        # IFPH carries an integer FIRE_YEAR_INT plus a (string) FIRE_YEAR;
+        # DATE_CUR is the "current as of" date. Prefer the explicit integer year.
         date_fields=("DATE_CUR", "FIRE_DATE", "DISCOVERY_DATE"),
-        year_fields=("FIRE_YEAR", "FIRE_YEAR_INT"),
+        year_fields=("FIRE_YEAR_INT", "FIRE_YEAR"),
         event_fields=("INCIDENT", "FIRE_NAME", "INCIDENT_NAME"),
         area_fields=("GIS_ACRES", "ACRES"),
-        native_crs="EPSG:4326",
+        native_crs="EPSG:3857",  # ArcGIS Hub export is Web Mercator; reprojected to 5070 for analysis
     ),
     "GEOMAC": ReferenceSpec(
         name="GEOMAC",
@@ -148,7 +149,7 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         year_fields=("fireyear",),
         event_fields=("incidentname", "fire_name"),
         area_fields=("gisacres", "acres"),
-        native_crs="EPSG:4326",
+        native_crs="EPSG:3857",  # ArcGIS Hub export is Web Mercator; reprojected to 5070 for analysis
     ),
     "TNC_BURNS": ReferenceSpec(
         name="TNC_BURNS",
