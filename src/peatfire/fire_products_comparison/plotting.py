@@ -294,7 +294,13 @@ def plot_overlay_map(
         cat_ma, extent=[left, right, bottom, top], origin="upper",
         cmap=OVERLAY_CMAP, vmin=1, vmax=3, interpolation="nearest",
     )
-    aoi_gdf.to_crs(a.rio.crs).boundary.plot(ax=ax, color="black", linewidth=0.8)
+    
+    # draw the dissolved outer outline, thin and semi-transparent, so the
+    # categorical cells underneath stay visible for fine-grained AOIs like peat
+    aoi_gdf.to_crs(a.rio.crs).dissolve().boundary.plot(
+        ax=ax, color="black", linewidth=0.4, alpha=0.3,
+    )
+    
     # pin to the full raster extent (geopandas autoscales to the tighter AOI
     # bbox, which clips the boundary); equal aspect avoids distortion.
     ax.set_xlim(left, right)
