@@ -656,6 +656,49 @@ def overlay_aoi_boundaries(
 
 
 # ---------------------------------------------------------------------------
+# Reference event selection (shared by the event-map helpers)
+# ---------------------------------------------------------------------------
+def _select_reference_event(reference: str, aoi_gdf, event):
+    """Load a reference clipped to ``aoi_gdf`` and pick one event.
+
+    ``event`` is an event name (case-insensitive substring -- one incident is
+    kept) or an already-selected event GeoDataFrame. Returns
+    ``(event_gdf, event_name)``; raises with the available names if nothing
+    matches (or the reference is absent).
+    """
+    ref = load_reference(reference, aoi_gdf)
+    if ref is None or ref.empty:
+        raise ValueError(
+            f"reference {reference!r} has no events within the AOI "
+            "(not downloaded, or nothing falls in the extent)."
+        )
+    if isinstance(event, gpd.GeoDataFrame):
+        event_gdf = event
+        event_name = (
+            str(event_gdf["_event"].iloc[0]) if "_event" in event_gdf.columns else "event"
+        )
+    else:
+        hit = ref[ref["_event"].str.contains(str(event), case=False, na=False)]
+        if hit.empty:
+            available = sorted(ref["_event"].dropna().unique().tolist())[:30]
+            raise ValueError(
+                f"no event matching {event!r} in {reference}. "
+                f"available (up to 30): {available}"
+            )
+        event_name = str(hit["_event"].iloc[0])  # keep a single incident
+        event_gdf = hit[hit["_event"] == event_name]
+    return event_gdf, event_name
+
+
+def _event_year(event_gdf):
+    """First parseable integer ``_year`` of an event GeoDataFrame, or ``None``."""
+    if "_year" not in event_gdf.columns:
+        return None
+    yrs = pd.to_numeric(event_gdf["_year"], errors="coerce").dropna()
+    return int(yrs.iloc[0]) if len(yrs) else None
+
+
+# ---------------------------------------------------------------------------
 # Reference-vs-product map for one chosen event
 # ---------------------------------------------------------------------------
 def plot_reference_vs_product_for_one_event(
@@ -728,39 +771,16 @@ def plot_reference_vs_product_for_one_event(
     set_fire_style()
     gdf_aoi = _as_gdf(aoi)
 
-    # 1) reference dataset, clipped to the AOI
-    ref = load_reference(reference, gdf_aoi)
-    if ref is None or ref.empty:
-        raise ValueError(
-            f"reference {reference!r} has no events within the AOI "
-            "(not downloaded, or nothing falls in the extent)."
-        )
-
-    # 2) pick one event -- accept a name/substring or an already-selected gdf
-    if isinstance(event, gpd.GeoDataFrame):
-        event_gdf = event
-        event_name = (
-            str(event_gdf["_event"].iloc[0]) if "_event" in event_gdf.columns else "event"
-        )
-    else:
-        hit = ref[ref["_event"].str.contains(str(event), case=False, na=False)]
-        if hit.empty:
-            available = sorted(ref["_event"].dropna().unique().tolist())[:30]
-            raise ValueError(
-                f"no event matching {event!r} in {reference}. "
-                f"available (up to 30): {available}"
-            )
-        event_name = str(hit["_event"].iloc[0])  # keep a single incident
-        event_gdf = hit[hit["_event"] == event_name]
+    # 1-2) reference dataset clipped to the AOI, and the chosen event
+    event_gdf, event_name = _select_reference_event(reference, gdf_aoi, event)
 
     # 3) the event's year, to time-match the product
     if year is None:
-        yrs = pd.to_numeric(event_gdf["_year"], errors="coerce").dropna()
-        if yrs.empty:
+        year = _event_year(event_gdf)
+        if year is None:
             raise ValueError(
                 f"event {event_name!r} has no parseable year; pass year= explicitly."
             )
-        year = int(yrs.iloc[0])
 
     # 4) grid: zoom to a buffered window around the event, or the whole AOI
     event_5070 = event_gdf.to_crs(ANALYSIS_CRS)
@@ -832,4 +852,104 @@ def plot_reference_vs_product_for_one_event(
         slug = re.sub(r"[^0-9A-Za-z]+", "_", event_name).strip("_") or "event"
         fname = f"{reference}_vs_{product}_{slug}_{year}.png"
         fig.savefig(out_dir / fname, dpi=150, bbox_inches="tight")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Just the reference perimeter, over the AOI (no product, no grid)
+# ---------------------------------------------------------------------------
+def plot_event_perimeter(
+    reference: str,
+    aoi,
+    event,
+    *,
+    fill: bool = True,
+    color: str = "firebrick",
+    alpha: float = 0.5,
+    aoi_context=None,
+    crs=ANALYSIS_CRS,
+    out_dir: Optional[Union[str, Path]] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """Draw one reference event's perimeter over the AOI -- vectors only.
+
+    The "where is this fire?" companion to
+    :func:`plot_reference_vs_product_for_one_event`: no product is loaded and
+    nothing is rasterised, so it is just the event polygon on the AOI outline.
+    The AOI (dissolved to its outer outline) sets the view; the perimeter is
+    drawn ``fill``ed (a translucent patch) or as a bare boundary; an optional
+    ``aoi_context`` outline (e.g. NC) is added for orientation via
+    :func:`overlay_aoi_boundaries`.
+
+    Parameters
+    ----------
+    reference : str
+        A registered reference key, e.g. ``"NIFC_IFPH"``.
+    aoi : str | Path | GeoDataFrame
+        The backdrop AOI; its outline sets the map extent.
+    event : str | GeoDataFrame
+        Event name (case-insensitive substring) or an already-selected event
+        GeoDataFrame.
+    fill : bool
+        ``True`` draws the perimeter as a translucent filled patch; ``False``
+        draws just its boundary line.
+    aoi_context : GeoDataFrame, optional
+        An extra outline (e.g. the NC state boundary) drawn for reference.
+    out_dir : str | Path, optional
+        If given, saves ``<reference>_<event-slug>[_<year>]_perimeter.png``.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    set_fire_style()
+    gdf_aoi = _as_gdf(aoi)
+    event_gdf, event_name = _select_reference_event(reference, gdf_aoi, event)
+    year = _event_year(event_gdf)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(9, 6))
+    else:
+        fig = ax.figure
+
+    # AOI outline first -- this establishes the view we keep.
+    gdf_aoi.to_crs(crs).dissolve().boundary.plot(
+        ax=ax, color="0.4", linewidth=0.8, alpha=0.6
+    )
+    e = event_gdf.to_crs(crs)
+    if fill:
+        e.plot(ax=ax, facecolor=color, edgecolor="black", linewidth=1.0, alpha=alpha)
+    else:
+        e.boundary.plot(ax=ax, color=color, linewidth=1.5)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+
+    # optional context outline, preserving the AOI view
+    handles = []
+    if aoi_context is not None:
+        handles = overlay_aoi_boundaries(
+            ax,
+            [{"gdf": aoi_context, "color": "0.4", "linewidth": 0.8, "label": "context"}],
+            crs,
+        )
+
+    label = f"{event_name}{f' ({year})' if year else ''}"
+    ax.set_title(f"{label} perimeter -- {reference} over AOI")
+    ax.legend(
+        handles=[Line2D([0], [0], color=color, lw=1.5, label=f"{event_name} perimeter")]
+        + handles,
+        loc="lower left",
+        fontsize=8,
+    )
+
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^0-9A-Za-z]+", "_", event_name).strip("_") or "event"
+        suffix = f"_{year}" if year else ""
+        fig.savefig(
+            out_dir / f"{reference}_{slug}{suffix}_perimeter.png",
+            dpi=150, bbox_inches="tight",
+        )
     return fig
