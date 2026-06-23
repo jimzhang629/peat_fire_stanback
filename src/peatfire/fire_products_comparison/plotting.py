@@ -24,12 +24,13 @@ from matplotlib.patches import Patch
 
 from .fire_comparison import (
     ANALYSIS_CRS,
+    _as_gdf,
     build_common_grid,
+    rasterize_polygons_to_grid,
     rmse,
-    to_common_grid,
+    stack_on_common_grid,
     total_least_squares,
 )
-from .fire_products import get_spec, load_points, load_standardized
 from .reference_sources import load_reference
 
 # Okabe-Ito colour-blind-safe qualitative palette.
