@@ -162,8 +162,8 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     "TNC_SANDHILLS": ReferenceSpec(
         name="TNC_SANDHILLS",
         kind="perimeter",
-        root_parts=("processed", "fire", "reference", "tnc_sandhills"),
-        glob="tnc_sandhills_*.gpkg",
+        root_parts=("raw", "fire", "reference", "TNC_NC_Sandhills_Fire_History_2025"),
+        glob="TNC_NC_Sandhills_Fire_History_2025.shp",
         date_fields=("START_DATE", "END_DATE"),
         year_fields=("YEAR", "Year"),
         event_fields=("BURN_UNIT", "PRESERVE"),
@@ -173,8 +173,8 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     "TNC_COASTAL_PLAIN": ReferenceSpec(
         name="TNC_COASTAL_PLAIN",
         kind="perimeter",
-        root_parts=("processed", "fire", "reference", "tnc_coastal_plain"),
-        glob="tnc_coastal_plain_*.gpkg",
+        root_parts=("raw", "fire", "reference", "TNC_NC_Coastal_Plain_Fire_History_2025"),
+        glob="TNC_NC_Coastal_Plain_Fire_History_2025.shp",
         date_fields=("START_DATE", "END_DATE"),
         year_fields=("YEAR", "Year"),
         event_fields=("BURN_UNIT", "PRESERVE"),
