@@ -47,6 +47,7 @@ from .validation import (
     validate_products,
 )
 from .plotting import (
+    overlay_aoi_boundaries,
     plot_agreement_heatmap,
     plot_annual_series,
     plot_consensus_map,
@@ -90,6 +91,7 @@ __all__ = [
     "summarize_validation",
     "validate_event",
     "validate_products",
+    "overlay_aoi_boundaries",
     "plot_agreement_heatmap",
     "plot_annual_series",
     "plot_consensus_map",

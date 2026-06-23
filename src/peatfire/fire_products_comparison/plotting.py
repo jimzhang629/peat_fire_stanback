@@ -17,6 +17,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -558,4 +559,276 @@ def plot_validation_heatmap(
     cbar.set_label(cbar_label)
     for s in ax.spines.values():
         s.set_visible(True)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Reusable AOI / reference boundary overlay
+# ---------------------------------------------------------------------------
+# A "layer" is either a bare GeoDataFrame (drawn with the defaults) or a dict
+# carrying the geometry plus per-layer style overrides.
+BoundaryLayer = Union[gpd.GeoDataFrame, dict]
+
+
+def overlay_aoi_boundaries(
+    ax: plt.Axes,
+    layers,
+    crs,
+    *,
+    default_color: str = "0.4",
+    default_linewidth: float = 0.8,
+    default_alpha: float = 1.0,
+    zorder: int = 5,
+    dissolve: bool = False,
+    add_legend: bool = False,
+    legend_loc: str = "lower left",
+):
+    """Draw one or more vector boundaries on top of an existing product-map axis.
+
+    This generalises the manual "plot the NC boundary, then restore the
+    xlim/ylim" dance the notebooks do by hand: ``geopandas`` autoscales the axis
+    to each layer's bounding box, which would otherwise zoom the product map out
+    (or in) to that layer. We snapshot the axis limits up front and restore them
+    after every layer is drawn, so the product view set by
+    :func:`plot_overlay_map` / :func:`plot_raster_map` is preserved.
+
+    Because it just takes "whatever AOIs you want, on whatever product axis", the
+    same call works for reference-vs-product (overlay an event perimeter) and
+    product-vs-product (overlay the state / peat-extent boundary) maps.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes
+        An axis that already has a product map drawn on it (its current
+        ``xlim``/``ylim`` define the view to keep).
+    layers : GeoDataFrame | iterable of (GeoDataFrame | dict)
+        Each layer is either a bare GeoDataFrame (drawn with the defaults) or a
+        dict ``{"gdf": ..., "color": ..., "linewidth": ..., "alpha": ...,
+        "label": ..., "dissolve": ...}`` overriding the defaults per layer.
+    crs
+        Target CRS to reproject every layer into -- pass the product grid CRS
+        (e.g. ``stack[name].rio.crs``), which is EPSG:5070 here.
+    dissolve : bool
+        Default dissolve flag: dissolve a layer to its single outer outline
+        before drawing. Good for many-polygon AOIs (the raw peat extent is
+        thousands of polygons whose boundaries otherwise render as a black mesh);
+        leave ``False`` to keep individual perimeters (e.g. a reference event).
+
+    Returns
+    -------
+    list of matplotlib handles
+        One :class:`~matplotlib.lines.Line2D` proxy per *labelled* layer, so the
+        caller can fold them into a combined legend.
+    """
+    set_fire_style()
+    if isinstance(layers, gpd.GeoDataFrame):
+        layers = [layers]
+
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    handles = []
+    for layer in layers:
+        if isinstance(layer, dict):
+            gdf = layer["gdf"]
+            color = layer.get("color", default_color)
+            lw = layer.get("linewidth", default_linewidth)
+            alpha = layer.get("alpha", default_alpha)
+            label = layer.get("label")
+            do_dissolve = layer.get("dissolve", dissolve)
+        else:
+            gdf = layer
+            color, lw, alpha = default_color, default_linewidth, default_alpha
+            label, do_dissolve = None, dissolve
+
+        g = gdf.to_crs(crs)
+        if do_dissolve:
+            g = g.dissolve()
+        g.boundary.plot(ax=ax, color=color, linewidth=lw, alpha=alpha, zorder=zorder)
+        if label:
+            handles.append(Line2D([0], [0], color=color, lw=lw, label=label))
+
+    # restore the product view (geopandas autoscaled to the overlay bbox above)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    if add_legend and handles:
+        ax.legend(handles=handles, loc=legend_loc)
+    return handles
+
+
+# ---------------------------------------------------------------------------
+# Reference-vs-product map for one chosen event
+# ---------------------------------------------------------------------------
+def plot_reference_vs_product_for_one_event(
+    reference: str,
+    product: str,
+    aoi,
+    event,
+    *,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    binary: bool = True,
+    extent: str = "event",
+    buffer_km: float = 10.0,
+    aoi_context=None,
+    common_grid_res: float = 500.0,
+    out_dir: Optional[Union[str, Path]] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """Map one product against one reference event, on the shared common grid.
+
+    Pulls the four pieces together for a single incident:
+
+    1. load the **reference** source (clipped to ``aoi``) and pick the **event**
+       by name (case-insensitive substring; one incident);
+    2. time-match and load the **product** for the event's year on a common grid;
+    3. rasterise the event's perimeter onto that *same* grid;
+    4. draw them, with the event perimeter and an optional context boundary
+       overlaid (via :func:`overlay_aoi_boundaries`), and save with the event
+       name in the filename.
+
+    For a **burned-area** product (``binary=True``) the figure is the
+    reference-vs-product *confusion overlay* -- the same categorical encoding as
+    :func:`plot_overlay_map`, reused verbatim, but with one mask being the
+    reference: blue = reference only (**omission**, the product missed it), red =
+    product only (commission), purple = **both** (hit). For a continuous product
+    (``binary=False``: severity / VIIRS counts) the product is drawn with
+    :func:`plot_raster_map` and the perimeter is overlaid on top.
+
+    Parameters
+    ----------
+    reference : str
+        A registered reference key (see
+        :func:`reference_sources.list_references`), e.g. ``"NIFC_IFPH"``.
+    product : str
+        A registered product name, e.g. ``"GABAM"``.
+    aoi : str | Path | GeoDataFrame
+        The clip/backdrop AOI (NC, peat extent, ...), as elsewhere.
+    event : str | GeoDataFrame
+        Event name (or unique substring) to look up in the reference, or an
+        already-selected event GeoDataFrame (its ``_event``/``_year`` columns are
+        used if present).
+    year : int, optional
+        Override the product year; by default the event's own ``_year`` is used.
+    extent : {"event", "aoi"}
+        ``"event"`` (default) zooms to a ``buffer_km`` window around the event --
+        the only view where a single incident's cells are legible. ``"aoi"`` maps
+        the whole AOI as the backdrop with the event as a small overlay (the
+        full-extent style of the comparison notebook's overlay cell).
+    aoi_context : GeoDataFrame, optional
+        An extra boundary to draw for geographic reference (e.g. the NC state
+        outline), exactly like the manual ``aoi_nc`` overlay in the notebooks.
+    out_dir : str | Path, optional
+        If given, the figure is saved there as
+        ``<reference>_vs_<product>_<event-slug>_<year>.png``.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    set_fire_style()
+    gdf_aoi = _as_gdf(aoi)
+
+    # 1) reference dataset, clipped to the AOI
+    ref = load_reference(reference, gdf_aoi)
+    if ref is None or ref.empty:
+        raise ValueError(
+            f"reference {reference!r} has no events within the AOI "
+            "(not downloaded, or nothing falls in the extent)."
+        )
+
+    # 2) pick one event -- accept a name/substring or an already-selected gdf
+    if isinstance(event, gpd.GeoDataFrame):
+        event_gdf = event
+        event_name = (
+            str(event_gdf["_event"].iloc[0]) if "_event" in event_gdf.columns else "event"
+        )
+    else:
+        hit = ref[ref["_event"].str.contains(str(event), case=False, na=False)]
+        if hit.empty:
+            available = sorted(ref["_event"].dropna().unique().tolist())[:30]
+            raise ValueError(
+                f"no event matching {event!r} in {reference}. "
+                f"available (up to 30): {available}"
+            )
+        event_name = str(hit["_event"].iloc[0])  # keep a single incident
+        event_gdf = hit[hit["_event"] == event_name]
+
+    # 3) the event's year, to time-match the product
+    if year is None:
+        yrs = pd.to_numeric(event_gdf["_year"], errors="coerce").dropna()
+        if yrs.empty:
+            raise ValueError(
+                f"event {event_name!r} has no parseable year; pass year= explicitly."
+            )
+        year = int(yrs.iloc[0])
+
+    # 4) grid: zoom to a buffered window around the event, or the whole AOI
+    event_5070 = event_gdf.to_crs(ANALYSIS_CRS)
+    if extent == "event":
+        win_geom = event_5070.geometry.union_all().buffer(buffer_km * 1000.0)
+        grid_aoi = gpd.GeoDataFrame(geometry=[win_geom], crs=ANALYSIS_CRS)
+    elif extent == "aoi":
+        grid_aoi = gdf_aoi
+    else:
+        raise ValueError(f"extent must be 'event' or 'aoi', got {extent!r}.")
+    grid = build_common_grid(grid_aoi, res_m=common_grid_res)
+    crs = grid.rio.crs
+
+    # 5) product on that grid + the rasterised reference perimeter (same grid)
+    stack = stack_on_common_grid(
+        [product], year, grid_aoi, binary=binary, grid=grid, month=month
+    )
+    ref_mask = rasterize_polygons_to_grid(event_5070, grid)
+    prod_da = stack.get(product)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(9, 6))
+    else:
+        fig = ax.figure
+
+    if binary:
+        # Reference-vs-product confusion overlay, reusing plot_overlay_map: the
+        # reference plays product "A", so 1 = reference only (omission), 2 =
+        # product only (commission), 3 = both (hit). A product absent for the
+        # year becomes an all-zero mask so the omission cells still show.
+        if prod_da is None:
+            prod_da = xr.zeros_like(ref_mask)
+        masks = {reference: ref_mask, product: prod_da}
+        plot_overlay_map(masks, grid_aoi, year, pair=(reference, product), ax=ax)
+        legend_handles = [
+            Patch(color=OVERLAY_CMAP.colors[0], label=f"{reference} only (omission)"),
+            Patch(color=OVERLAY_CMAP.colors[1], label=f"{product} only (commission)"),
+            Patch(color=OVERLAY_CMAP.colors[2], label="both (hit)"),
+        ]
+    else:
+        if prod_da is None:
+            ax.text(
+                0.5, 0.5, f"{product}: no data for {year}",
+                ha="center", va="center", transform=ax.transAxes,
+            )
+        else:
+            plot_raster_map(prod_da, grid_aoi, title="", ax=ax)
+        legend_handles = []
+
+    # 6) overlay the actual event perimeter (+ optional context), pinning the view
+    layers = [
+        {"gdf": event_gdf, "color": "black", "linewidth": 1.4,
+         "label": f"{event_name} perimeter"},
+    ]
+    if aoi_context is not None:
+        layers.append(
+            {"gdf": aoi_context, "color": "0.4", "linewidth": 0.8, "label": "context"}
+        )
+    legend_handles += overlay_aoi_boundaries(ax, layers, crs)
+    if legend_handles:
+        ax.legend(handles=legend_handles, loc="lower left", fontsize=8)
+
+    ax.set_title(f"{event_name} ({year}): {reference} reference vs {product}")
+
+    # 7) save with the event name in the filename
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^0-9A-Za-z]+", "_", event_name).strip("_") or "event"
+        fname = f"{reference}_vs_{product}_{slug}_{year}.png"
+        fig.savefig(out_dir / fname, dpi=150, bbox_inches="tight")
     return fig
