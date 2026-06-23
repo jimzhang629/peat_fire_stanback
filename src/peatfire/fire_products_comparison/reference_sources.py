@@ -153,12 +153,12 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         area_fields=("gisacres", "acres"),
         native_crs="EPSG:3857",  # ArcGIS Hub export is Web Mercator; reprojected to 5070 for analysis
     ),
-    # Margaret's two TNC programs arrive as shapefiles
+    # Margaret's two TNC programs are shapefiles, read directly from raw/
     # (TNC_NC_Sandhills_Fire_History_2025.shp,
-    #  TNC_NC_Coastal_Plain_Fire_History_2025.shp); clip each to a processed gpkg.
-    # NOTE: the *_fields candidate lists below are best-guess until the shapefile
-    # columns are confirmed -- shapefiles also truncate field names to 10 chars,
-    # so verify and extend these tuples (one-line change, no logic touched).
+    #  TNC_NC_Coastal_Plain_Fire_History_2025.shp). Field names confirmed from the
+    # shapefiles: Sandhills has YEAR + MONTH; Coastal Plain has Year (different
+    # case) and no MONTH, so its month is parsed from START_DATE. The candidate
+    # lists cover both casings, so the same spec shape works for either file.
     "TNC_SANDHILLS": ReferenceSpec(
         name="TNC_SANDHILLS",
         kind="perimeter",
@@ -181,7 +181,6 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         area_fields=("ACREAGE",),
         native_crs="EPSG:3857",  # ArcGIS/Web Mercator; reprojected to 5070 for analysis
     ),
-    
     "NCWRC_RX": ReferenceSpec(
         name="NCWRC_RX",
         kind="perimeter",

@@ -55,10 +55,11 @@ import xarray as xr
 from .fire_comparison import (
     ANALYSIS_CRS,
     build_common_grid,
+    rasterize_points_to_grid,
     rasterize_polygons_to_grid,
-    stack_on_common_grid,
+    to_common_grid,
 )
-from .fire_products import get_spec, list_products
+from .fire_products import get_spec, list_products, load_points, load_standardized
 from .reference_sources import get_reference, load_reference
 
 
@@ -112,6 +113,83 @@ def _window_gdf(event_geom_5070, buffer_m: float) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(geometry=[win], crs=ANALYSIS_CRS)
 
 
+def _preload_products(
+    products: Iterable[str],
+    year: int,
+    month: Optional[int],
+    clip_aoi: gpd.GeoDataFrame,
+) -> dict:
+    """Load each product ONCE for a period, clipped to ``clip_aoi`` (native grid).
+
+    Returns ``{product: (kind, data)}`` where ``kind`` is ``"raster"`` (a burned
+    mask in the product's native grid) or ``"points"`` (an active-fire
+    GeoDataFrame), and ``data`` is ``None`` when the product has no data for the
+    period. Only burned-area and occurrence products are loaded; severity is not
+    validated against perimeters.
+
+    Loading here -- once per period rather than once per event -- is what lets
+    many same-year events reuse a single disk read (see :func:`validate_products`).
+    """
+    out: dict = {}
+    for product in products:
+        spec = get_spec(product)
+        if spec.family == "burned_area":
+            out[product] = ("raster", load_standardized(product, year, clip_aoi, month))
+        elif spec.family == "occurrence":
+            out[product] = ("points", load_points(product, year, clip_aoi, month))
+        # severity: not scored against perimeters -> skipped
+    return out
+
+
+def _score_event(
+    event_gdf: gpd.GeoDataFrame,
+    preloaded: dict,
+    year: int,
+    month: Optional[int],
+    buffer_km: float,
+    common_grid_res: float,
+) -> pd.DataFrame:
+    """Score already-loaded products against ONE event on its window grid.
+
+    The result is identical to loading per-event: the buffered window grid, the
+    rasterised reference mask, and the metrics are the same -- the products are
+    simply reprojected from the in-memory period arrays in ``preloaded`` (from
+    :func:`_preload_products`) instead of being re-read from disk.
+    """
+    geom_5070 = event_gdf.to_crs(ANALYSIS_CRS).geometry.union_all()
+    window = _window_gdf(geom_5070, buffer_km * 1000.0)
+    grid = build_common_grid(window, res_m=common_grid_res)
+
+    ref_mask = rasterize_polygons_to_grid(event_gdf.to_crs(ANALYSIS_CRS), grid)
+    if float(ref_mask.sum()) == 0:
+        return pd.DataFrame()  # perimeter too small for the grid; nothing to score
+
+    event_name = (
+        str(event_gdf["_event"].iloc[0]) if "_event" in event_gdf.columns else "event"
+    )
+    rows = []
+    for product, (kind, data) in preloaded.items():
+        if data is None:
+            continue  # product absent for this period (e.g. VIIRS pre-2012)
+        if kind == "raster":
+            prod_mask = to_common_grid(data.astype("float32"), grid, how="max") > 0
+            prod_mask = prod_mask.rio.write_crs(grid.rio.crs)
+        else:  # points (occurrence): per-cell presence
+            prod_mask = rasterize_points_to_grid(data, grid, agg="any")
+        scores = confusion_scores(prod_mask, ref_mask)
+        rows.append(
+            {
+                "event": event_name,
+                "year": year,
+                "month": month,
+                "product": product,
+                "family": get_spec(product).family,
+                **scores,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def validate_event(
     event_gdf: gpd.GeoDataFrame,
     products: Iterable[str],
@@ -134,35 +212,8 @@ def validate_event(
     products = list(products)
     geom_5070 = event_gdf.to_crs(ANALYSIS_CRS).geometry.union_all()
     window = _window_gdf(geom_5070, buffer_km * 1000.0)
-    grid = build_common_grid(window, res_m=common_grid_res)
-
-    ref_mask = rasterize_polygons_to_grid(event_gdf.to_crs(ANALYSIS_CRS), grid)
-    if float(ref_mask.sum()) == 0:
-        return pd.DataFrame()  # perimeter too small for the grid; nothing to score
-
-    stack = stack_on_common_grid(
-        products, year, window, binary=True, grid=grid, month=month
-    )
-
-    event_name = (
-        str(event_gdf["_event"].iloc[0]) if "_event" in event_gdf.columns else "event"
-    )
-    rows = []
-    for product in products:
-        if product not in stack:
-            continue  # product absent for this period (e.g. VIIRS pre-2012)
-        scores = confusion_scores(stack[product], ref_mask)
-        rows.append(
-            {
-                "event": event_name,
-                "year": year,
-                "month": month,
-                "product": product,
-                "family": get_spec(product).family,
-                **scores,
-            }
-        )
-    return pd.DataFrame(rows)
+    preloaded = _preload_products(products, year, month, window)
+    return _score_event(event_gdf, preloaded, year, month, buffer_km, common_grid_res)
 
 
 def validate_products(
@@ -177,9 +228,12 @@ def validate_products(
 ) -> pd.DataFrame:
     """Validate products against every event of a reference source within ``aoi``.
 
-    Loads the reference (:func:`reference_sources.load_reference`), iterates its
-    events, and runs :func:`validate_event` on each, time-matched to the event's
-    own year (and month, if ``match="month"`` and the source carries a date).
+    Loads the reference (:func:`reference_sources.load_reference`) and scores every
+    event, time-matched to its own year (and month, if ``match="month"`` and the
+    source carries a date). Events are grouped by period so each product is read
+    from disk **once per period** rather than once per event -- so a source with
+    hundreds of small fires in a few years (TNC/NCWRC) stays fast. The per-event
+    result is identical to :func:`validate_event` (same window grid and metrics).
 
     Parameters
     ----------
@@ -225,21 +279,39 @@ def validate_products(
     if ref.empty:
         return pd.DataFrame()
 
+    # Group events by their matched period and load each product ONCE per period
+    # (clipped to the buffered bounding box of that period's events), then score
+    # every event in the period from the in-memory arrays. This turns disk reads
+    # from O(events) into O(periods) -- the big win when a source has many small
+    # fires clustered in a handful of years (TNC/NCWRC). Results are identical to
+    # scoring each event independently (same window grid and metrics).
+    pkey_year = ref["_year"].astype(int)
+    if match == "month":
+        pkey_month = ref["_month"].apply(lambda m: int(m) if pd.notna(m) else None)
+    else:
+        pkey_month = pd.Series([None] * len(ref), index=ref.index, dtype="object")
+    ref = ref.assign(_pkey_year=pkey_year.values, _pkey_month=pkey_month.values)
+
     frames = []
-    for idx in ref.index:
-        event_gdf = ref.loc[[idx]]
-        year = int(event_gdf["_year"].iloc[0])
-        month = None
-        if match == "month":
-            m = event_gdf["_month"].iloc[0]
-            month = int(m) if pd.notna(m) else None
-        frame = validate_event(
-            event_gdf, products, year, month=month,
-            buffer_km=buffer_km, common_grid_res=common_grid_res,
+    for (yr, mo), group in ref.groupby(
+        ["_pkey_year", "_pkey_month"], dropna=False, sort=True
+    ):
+        yr = int(yr)
+        mo = int(mo) if (mo is not None and pd.notna(mo)) else None
+        # one clip per period: the buffered bbox covering all of its events
+        region_geom = (
+            group.to_crs(ANALYSIS_CRS).buffer(buffer_km * 1000.0).union_all().envelope
         )
-        if not frame.empty:
-            frame.insert(0, "source", reference)
-            frames.append(frame)
+        region = gpd.GeoDataFrame(geometry=[region_geom], crs=ANALYSIS_CRS)
+        preloaded = _preload_products(products, yr, mo, region)
+        for idx in group.index:
+            frame = _score_event(
+                group.loc[[idx]], preloaded, yr, mo, buffer_km, common_grid_res
+            )
+            if not frame.empty:
+                frame.insert(0, "source", reference)
+                frames.append(frame)
+        del preloaded  # release this period's rasters before loading the next
 
     return (
         pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
