@@ -9,15 +9,27 @@ these figures are for supervisors.
 
 from __future__ import annotations
 
-from typing import Optional
+import re
+from pathlib import Path
+from typing import Optional, Union
 
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from .fire_comparison import rmse, total_least_squares
+from .fire_comparison import (
+    ANALYSIS_CRS,
+    build_common_grid,
+    rmse,
+    to_common_grid,
+    total_least_squares,
+)
+from .fire_products import get_spec, load_points, load_standardized
+from .reference_sources import load_reference
 
 # Okabe-Ito colour-blind-safe qualitative palette.
 OKABE_ITO = [
@@ -498,7 +510,6 @@ def plot_consensus_map(
     )
     cbar.set_label("Number of products mapping burn")
     return fig
-
 
 def plot_validation_heatmap(
     matrix: pd.DataFrame,
