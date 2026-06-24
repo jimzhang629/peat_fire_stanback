@@ -837,7 +837,7 @@ def plot_reference_vs_product_for_one_event(
     ]
     if aoi_context is not None:
         layers.append(
-            {"gdf": aoi_context, "color": "0.4", "linewidth": 0.8, "label": "context"}
+            {"gdf": aoi_context, "color": "0.4", "linewidth": 0.8}
         )
     legend_handles += overlay_aoi_boundaries(ax, layers, crs)
     if legend_handles:

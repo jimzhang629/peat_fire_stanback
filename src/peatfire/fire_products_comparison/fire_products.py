@@ -323,19 +323,19 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         value_predicate=lambda da: da,
         native_crs="EPSG:5070",
     ),
-    # ---- not yet downloaded: skips gracefully until the data lands ----
-    "USGS_BA": ProductSpec(
-        name="USGS_BA",
-        family="burned_area",
-        kind="raster",
-        native_res_m=30.0,
-        temporal="annual",
-        root_parts=("processed", "fire", "usgs_lba"),
-        glob="usgs_lba_*_nc.tif",  # TODO confirm when downloaded
-        year_parser=_second_token_year,
-        burn_predicate=lambda da: da > 0,
-        native_crs="EPSG:5070",
-    ),
+    # # ---- not yet downloaded: skips gracefully until the data lands ----
+    # "USGS_BA": ProductSpec(
+    #     name="USGS_BA",
+    #     family="burned_area",
+    #     kind="raster",
+    #     native_res_m=30.0,
+    #     temporal="annual",
+    #     root_parts=("processed", "fire", "usgs_lba"),
+    #     glob="usgs_lba_*_nc.tif",  # TODO confirm when downloaded
+    #     year_parser=_second_token_year,
+    #     burn_predicate=lambda da: da > 0,
+    #     native_crs="EPSG:5070",
+    # ),
 }
 
 
