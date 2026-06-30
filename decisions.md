@@ -1,5 +1,43 @@
 log each methodological choice
 
+## Modeling: peat condition -> fire (see modeling_roadmap.md)
+
+- **Dependent variable = FireCCIS311, kept swappable.** The response is produced
+  by `load_standardized(product, ...)` (boolean burned mask for the `burned_area`
+  family, continuous grid for `severity`), so switching the DV to a severity
+  product later changes only the `y` column and the model family -- nothing
+  upstream. ("Make the modeling pipeline plug and play for the dependent
+  variable.")
+
+- **Peat extent uses an 80% histosol threshold, not 0.** The modeling sample
+  frame is restricted to high-confidence peat (gSSURGO `H% >= 80`) instead of
+  any-histosol presence, to keep non-peat noise out of the covariate
+  distributions. Implemented as `PEAT_THRESHOLD = 80` in
+  `download_and_clip_data.ipynb`.
+
+- **Matched case-control design, not a whole-landscape GLM.** Treated units are
+  restoration polygons; controls are the nearest *unrestored* peat (on the 80%
+  frame) matched to them on distance-to-coast, elevation, land cover, and
+  histosol %. Matching buys covariate overlap so the restoration effect is not
+  confounded by where restoration happens. A naive pixel-GLM is kept only as the
+  cluster-robust baseline.
+
+- **Unit of analysis = pixel-year on the existing EPSG:5070 common grid**, tagged
+  with `site_id` and `year`. Reusing `build_common_grid` keeps the modeling grid
+  identical to the fire-comparison grid (area stays meaningful, no new CRS
+  choice). `site_id`/`year` are the clustering / random-effect keys that correct
+  for the fact that pixels within a site (and all fire within a dry year) are not
+  independent -- the effective N is sites x years, not pixels.
+
+- **Drainage is an area-weighted mean of HAND per unit**, not a centroid sample
+  ("do weighted mean of drainage by area").
+
+- **Models build from cluster-robust GLM -> mixed logistic GLMM
+  (`burned ~ treated + drainage + covariates + (1|site) + (1|year)`) -> a
+  treatment x climate interaction**, reported as odds ratios with CIs, peat
+  condition first. Rare-event handling: Firth-penalized logistic if separation
+  appears; Tweedie/hurdle for burned *area* as the DV.
+
 ## Fire-product comparison toolkit (src/peatfire/fire_products.py, fire_comparison.py, plotting.py)
 
 - **Analysis CRS = EPSG:5070 (NAD83 / CONUS Albers Equal Area)**, fixed for all
