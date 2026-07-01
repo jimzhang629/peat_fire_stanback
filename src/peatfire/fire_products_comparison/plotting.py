@@ -705,6 +705,7 @@ def plot_reference_vs_product_for_one_event(
     reference: str,
     product: str,
     aoi,
+    aoi_name,
     event,
     *,
     year: Optional[int] = None,
@@ -746,6 +747,8 @@ def plot_reference_vs_product_for_one_event(
         A registered product name, e.g. ``"GABAM"``.
     aoi : str | Path | GeoDataFrame
         The clip/backdrop AOI (NC, peat extent, ...), as elsewhere.
+    aoi_name : str
+        Save name for aoi
     event : str | GeoDataFrame
         Event name (or unique substring) to look up in the reference, or an
         already-selected event GeoDataFrame (its ``_event``/``_year`` columns are
@@ -850,7 +853,7 @@ def plot_reference_vs_product_for_one_event(
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         slug = re.sub(r"[^0-9A-Za-z]+", "_", event_name).strip("_") or "event"
-        fname = f"{reference}_vs_{product}_{slug}_{year}.png"
+        fname = f"{reference}_vs_{product}_{slug}_{year}_in_{aoi_name}_extent.png"
         fig.savefig(out_dir / fname, dpi=150, bbox_inches="tight")
     return fig
 
@@ -861,6 +864,7 @@ def plot_reference_vs_product_for_one_event(
 def plot_event_perimeter(
     reference: str,
     aoi,
+    aoi_name,
     event,
     *,
     fill: bool = True,
@@ -887,6 +891,8 @@ def plot_event_perimeter(
         A registered reference key, e.g. ``"NIFC_IFPH"``.
     aoi : str | Path | GeoDataFrame
         The backdrop AOI; its outline sets the map extent.
+    aoi_name : str
+        Save name for aoi
     event : str | GeoDataFrame
         Event name (case-insensitive substring) or an already-selected event
         GeoDataFrame.
@@ -930,12 +936,12 @@ def plot_event_perimeter(
     if aoi_context is not None:
         handles = overlay_aoi_boundaries(
             ax,
-            [{"gdf": aoi_context, "color": "0.4", "linewidth": 0.8, "label": "context"}],
+            [{"gdf": aoi_context, "color": "0.4", "linewidth": 0.8}],
             crs,
         )
 
     label = f"{event_name}{f' ({year})' if year else ''}"
-    ax.set_title(f"{label} perimeter -- {reference} over AOI")
+    ax.set_title(f"{label} perimeter -- {reference} over {aoi_name}")
     ax.legend(
         handles=[Line2D([0], [0], color=color, lw=1.5, label=f"{event_name} perimeter")]
         + handles,
@@ -949,7 +955,7 @@ def plot_event_perimeter(
         slug = re.sub(r"[^0-9A-Za-z]+", "_", event_name).strip("_") or "event"
         suffix = f"_{year}" if year else ""
         fig.savefig(
-            out_dir / f"{reference}_{slug}{suffix}_perimeter.png",
+            out_dir / f"{reference}_{slug}{suffix}_perimeter_in_{aoi_name}_extent.png",
             dpi=150, bbox_inches="tight",
         )
     return fig
