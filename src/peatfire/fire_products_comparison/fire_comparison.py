@@ -266,6 +266,7 @@ def annual_burned_area_series(
     burned area as a percentage of the AOI area (comparable across AOIs of
     different size).
     """
+
     periods = _expand_periods(years, temporal_unit)
     grid = build_common_grid(aoi, res_m=common_grid_res) if mode == "common_grid" else None
     aoi_km2 = float(aoi.to_crs(ANALYSIS_CRS).area.sum()) / 1e6
