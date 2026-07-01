@@ -161,9 +161,17 @@ headline; everything else is an adjusted covariate.
 - Keep the whole thing parameterized by `product` so severity is a one-line swap,
   per the project notes ("make the modeling pipeline plug and play for the
   dependent variable").
-- Put model code in `src/peatfire/modeling/` (a `covariates.py` registry + a
-  `frame.py` table-builder + a `models.py` fitter), tested the same way as the
-  fire toolkit, and drive it from a `notebooks/modeling.ipynb`.
+- Model code lives in `src/peatfire/modeling/` (scaffolded):
+  - `covariates.py` -- a `CovariateSpec` registry mirroring `ProductSpec`, with
+    loaders that warp each layer onto the shared grid (`elevation`, `histosol_pct`
+    are live; `land_cover`, `drainage`, `management` registered and skip until
+    downloaded).
+  - `frame.py` -- `build_frame(units, product, years, ...)` assembles the tidy
+    pixel-year table. It **consumes** an upstream-matched `units` set (treated
+    restoration polygons + matched controls); the matching itself is not in the
+    package, keeping the causal design explicit.
+  - `models.py` -- `fit_logit_clustered` / `fit_mixed_logit` -> `odds_ratios`.
+  Drive it from a `notebooks/modeling.ipynb`.
 - Log every choice that has a defensible alternative in `decisions.md`.
 
 ---
