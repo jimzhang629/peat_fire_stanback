@@ -40,13 +40,14 @@ nc <- counties(state = "North Carolina") %>%
 ## https://search.r-project.org/CRAN/refmans/FedData/html/get_ghcn_daily.html
 
 nc.climate <- get_ghcn_daily(
-  template = nc, 
+  template = nc,
   label = "nc_climate",
   elements = c("tmax", "tmin", "prcp"),
   standardize = TRUE,
-  years = c(1926:2026)
+  years = c(1926:2026),
+  raw.dir = "data/raw/climate/ghcn",
+  extraction.dir = "data/interim/climate/ghcn"
 )
-
 
 ############################## Get dataframes ##################################
 
@@ -214,8 +215,11 @@ get_ssurgo_fixed <- function(template, label, ...) {
 areanames <- paste0("NC", nc$COUNTYFP)
 
 nc.soil <- get_ssurgo_fixed(
-  template = areanames, 
-  label = "nc_soil", force.redo = TRUE
+  template = areanames,
+  label = "nc_soil",
+  raw.dir = "data/raw/soil/ssurgo",
+  extraction.dir = "data/interim/soil/ssurgo",
+  force.redo = TRUE
 )
 
 ################################################################################
@@ -225,10 +229,9 @@ nc.soil <- get_ssurgo_fixed(
 nc.lc <- get_nlcd(
   template = nc,
   label = "nc_landcover",
-  # Available years are: 2001, 2004, 2006, 2008, 2011, 2016, 2019. 
-  ## User can only select one year at a time
-  year = 2019, 
+  year = 2019,
   dataset = "landcover",
+  extraction.dir = "data/interim/land_cover/nlcd",
   force.redo = TRUE
 )
 
