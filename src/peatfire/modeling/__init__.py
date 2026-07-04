@@ -36,6 +36,23 @@ from .models import (
     fit_mixed_logit,
     odds_ratios,
 )
+from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
+    assemble_units,
+    attach_covariates,
+    balance_table,
+    build_candidate_pool,
+    check_balance,
+    check_candidate_pool,
+    check_covariates,
+    check_matches,
+    check_pixels,
+    check_treated_units,
+    load_treated_units,
+    match_controls,
+    pixelate,
+    plot_balance,
+    standardized_mean_diff,
+)
 
 __all__ = [
     "COVARIATES",
@@ -51,4 +68,19 @@ __all__ = [
     "fit_logit_clustered",
     "fit_mixed_logit",
     "odds_ratios",
+    "assemble_units",
+    "attach_covariates",
+    "balance_table",
+    "build_candidate_pool",
+    "check_balance",
+    "check_candidate_pool",
+    "check_covariates",
+    "check_matches",
+    "check_pixels",
+    "check_treated_units",
+    "load_treated_units",
+    "match_controls",
+    "pixelate",
+    "plot_balance",
+    "standardized_mean_diff",
 ]
