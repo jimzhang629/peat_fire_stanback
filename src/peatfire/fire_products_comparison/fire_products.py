@@ -306,9 +306,8 @@ FIRE_PRODUCTS: dict[str, ProductSpec] = {
         kind="raster",
         native_res_m=30.0,
         temporal="annual",
-        # inventory: NOT yet clipped to processed; raw is per-year in sub-folders:
-        # data/raw/fire/mtbs/mtbs_NC_{YYYY}/mtbs_NC_{YYYY}.tif (loaders clip in-memory)
-        root_parts=("raw", "fire", "mtbs"),
+        # data/processed/fire/mtbs/mtbs_NC_{YYYY}/mtbs_NC_{YYYY}.tif (loaders clip in-memory)
+        root_parts=("processed", "fire", "mtbs"),
         glob="mtbs_NC_*/mtbs_NC_*.tif",
         year_parser=_third_token_year,
         # MTBS thematic severity classes: 1 unburned-low, 2 low, 3 moderate,

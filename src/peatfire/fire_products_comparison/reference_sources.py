@@ -153,7 +153,7 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
         area_fields=("gisacres", "acres"),
         native_crs="EPSG:3857",  # ArcGIS Hub export is Web Mercator; reprojected to 5070 for analysis
     ),
-    # Margaret's two TNC programs are shapefiles, read directly from raw/
+    # Margaret's two TNC programs are shapefiles
     # (TNC_NC_Sandhills_Fire_History_2025.shp,
     #  TNC_NC_Coastal_Plain_Fire_History_2025.shp). Field names confirmed from the
     # shapefiles: Sandhills has YEAR + MONTH; Coastal Plain has Year (different
@@ -162,7 +162,7 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     "TNC_SANDHILLS": ReferenceSpec(
         name="TNC_SANDHILLS",
         kind="perimeter",
-        root_parts=("raw", "fire", "reference", "TNC_NC_Sandhills_Fire_History_2025"),
+        root_parts=("processed", "fire", "reference", "TNC_NC_Sandhills_Fire_History_2025"),
         glob="TNC_NC_Sandhills_Fire_History_2025.shp",
         date_fields=("START_DATE", "END_DATE"),
         year_fields=("YEAR", "Year"),
@@ -173,7 +173,7 @@ REFERENCE_SOURCES: dict[str, ReferenceSpec] = {
     "TNC_COASTAL_PLAIN": ReferenceSpec(
         name="TNC_COASTAL_PLAIN",
         kind="perimeter",
-        root_parts=("raw", "fire", "reference", "TNC_NC_Coastal_Plain_Fire_History_2025"),
+        root_parts=("processed", "fire", "reference", "TNC_NC_Coastal_Plain_Fire_History_2025"),
         glob="TNC_NC_Coastal_Plain_Fire_History_2025.shp",
         date_fields=("START_DATE", "END_DATE"),
         year_fields=("YEAR", "Year"),
