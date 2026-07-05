@@ -18,5 +18,10 @@ dependencies:
   - pandas
   - numpy
   - matplotlib   # <-- plotting (time series, heatmaps, overlay maps)
+  - statsmodels  # <-- GLM / GLMM fits for the modeling pipeline
+  - scikit-learn # <-- nearest-neighbour control matching, scaling
   - jupyterlab
   - ipykernel
+  - pip
+  - pip:
+      - pymatch   # <-- propensity-score control matching (pip-only); optional

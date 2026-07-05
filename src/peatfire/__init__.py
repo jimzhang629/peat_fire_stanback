@@ -115,3 +115,35 @@ except ImportError:
     # Geospatial dependencies not installed; the data_loading helpers above
     # remain available.
     pass
+
+try:  # optional modeling API (peat condition -> fire); see modeling_roadmap.md
+    from .modeling import (
+        COVARIATES,
+        available_covariates,
+        build_frame,
+        build_modeling_grid,
+        covariate_on_grid,
+        fit_logit_clustered,
+        fit_mixed_logit,
+        list_covariates,
+        load_covariate,
+        load_restoration_sites,
+        odds_ratios,
+    )
+
+    __all__ += [
+        "COVARIATES",
+        "available_covariates",
+        "build_frame",
+        "build_modeling_grid",
+        "covariate_on_grid",
+        "fit_logit_clustered",
+        "fit_mixed_logit",
+        "list_covariates",
+        "load_covariate",
+        "load_restoration_sites",
+        "odds_ratios",
+    ]
+except ImportError:
+    # Modeling dependencies (geopandas/statsmodels) not installed.
+    pass
