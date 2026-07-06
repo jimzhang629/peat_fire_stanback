@@ -52,7 +52,7 @@ DEFAULT_RES_M = 300.0
 # ---------------------------------------------------------------------------
 # Treatment layer (restoration sites)
 # ---------------------------------------------------------------------------
-def load_restoration_sites(path: Optional[Path] = None) -> gpd.GeoDataFrame:
+def load_restoration_sites(path: Optional[Path] = None, restoration_yr_col: str = 'End_Yr') -> gpd.GeoDataFrame:
     """Load the peatland-restoration polygons, reprojected to the analysis CRS.
 
     Defaults to the processed NC pocosin restoration shapefile. The returned
@@ -60,6 +60,9 @@ def load_restoration_sites(path: Optional[Path] = None) -> gpd.GeoDataFrame:
     that looks like a restoration date is surfaced as ``restoration_year`` to
     support pre/post-restoration matching downstream; if none is found the column
     is left as ``NaN`` (fill it in once the attribute schema is confirmed).
+    
+    restoration_yr_col : str
+        The column to treat as the restoration year (i.e., 'Start_Yr' or 'End_Yr').
     """
     if path is None:
         path = data_path(
@@ -70,19 +73,10 @@ def load_restoration_sites(path: Optional[Path] = None) -> gpd.GeoDataFrame:
         )
     gdf = gpd.read_file(path).to_crs(ANALYSIS_CRS)
 
-    # best-effort surfacing of a restoration date/year column (schema unconfirmed)
-    year_col = next(
-        (c for c in gdf.columns if any(k in c.lower() for k in ("year", "date", "restor"))),
-        None,
-    )
-    if year_col is not None:
-        gdf["restoration_year"] = pd.to_datetime(
-            gdf[year_col], errors="coerce"
-        ).dt.year.fillna(
-            pd.to_numeric(gdf[year_col], errors="coerce")
-        )
-    else:
-        gdf["restoration_year"] = np.nan
+    # set the restoration year as the 'End_Yr' rather than the 'Start_Yr' for now, and replace placeholder 0's with nan
+    # some sites have 'Status_202' = 'Completed' but no 'End_Yr' yet. Ask Eric about these, but leave them out for now.
+    gdf[restoration_yr_col] = gdf[restoration_yr_col].replace(0, np.nan)
+    gdf = gdf.dropna(subset=restoration_yr_col)
     return gdf
 
 
@@ -125,7 +119,7 @@ def build_frame(
     covariate_names: Optional[Sequence[str]] = None,
     res_m: float = DEFAULT_RES_M,
     unit_id_col: str = "unit_id",
-    site_id_col: str = "site_id",
+    site_id_col: str = "Proj_Name",
     treated_col: str = "treated",
 ) -> pd.DataFrame:
     """Assemble the tidy pixel-year modeling frame.
