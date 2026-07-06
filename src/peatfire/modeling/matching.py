@@ -81,7 +81,7 @@ def build_candidate_pool(
     return candidates
 
 def pixelate(
-    polygons: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M
+    polygons: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M, grid=None
 ) -> gpd.GeoDataFrame:
     """Stage 3. Pixel-centroid points covering ``polygons`` at ``res_m``.
 
@@ -94,10 +94,22 @@ def pixelate(
         Returns a point GeoDataFrame (EPSG:5070) with columns ``["x", "y",
         "geometry"]``; ~ ``area / res_m**2`` rows.
     """
-    raise NotImplementedError(
-        "Stage 3: build_modeling_grid gives the grid; a cell centre is "
-        "(x + res/2, y - res/2). Keep centroids that fall within `polygons`."
+    if grid is None:
+        grid = build_common_grid(polygons, res_m, ANALYSIS_CRS)
+
+    xs = grid['x'].values # 1d array of column centers
+    ys = grid['y'].values # 1d array of row centers
+
+    xx, yy = np.meshgrid(xs, ys) # each grid is nrows, ncols
+    xx, yy = xx.ravel(), yy.ravel() # flatten to 1d
+
+    points = gpd.GeoDataFrame(
+        {'x': xx, 'y': yy},
+        geometry = gpd.points_from_xy(xx, yy),
+        crs=grid.rio.crs
     )
+
+    return points
 
 
 def attach_covariates(

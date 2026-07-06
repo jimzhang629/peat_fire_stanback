@@ -51,6 +51,7 @@ try:  # optional geospatial API
         rmse,
         stack_on_common_grid,
         total_least_squares,
+        rasterize_polygons_to_grid
     )
     from .fire_products_comparison.reference_sources import (
         REFERENCE_SOURCES,
@@ -93,6 +94,7 @@ try:  # optional geospatial API
         "rmse",
         "stack_on_common_grid",
         "total_least_squares",
+        "rasterize_polygons_to_grid",
         "REFERENCE_SOURCES",
         "get_reference",
         "list_references",
