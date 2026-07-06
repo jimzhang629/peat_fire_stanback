@@ -83,7 +83,9 @@ def build_candidate_pool(
 def pixelate(
     polygons: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M, grid=None
 ) -> gpd.GeoDataFrame:
-    """Stage 3. Pixel-centroid points covering ``polygons`` at ``res_m``.
+    """
+    This projects polygons into res_m and onto a common grid, then gets the centers of each grid pixel within the polygons
+    Stage 3. Pixel-centroid points covering ``polygons`` at ``res_m``.
 
     Figure out: what resolution (match the fire product, ~300 m); how to turn a
     grid into centroid points; how to keep only centroids inside ``polygons``.
@@ -94,6 +96,10 @@ def pixelate(
         Returns a point GeoDataFrame (EPSG:5070) with columns ``["x", "y",
         "geometry"]``; ~ ``area / res_m**2`` rows.
     """
+    # reproject polygons to analysis crs first
+    polygons = polygons.to_crs(ANALYSIS_CRS)
+    
+    # build common grid if not already passed in
     if grid is None:
         grid = build_common_grid(polygons, res_m, ANALYSIS_CRS)
 
@@ -103,13 +109,17 @@ def pixelate(
     xx, yy = np.meshgrid(xs, ys) # each grid is nrows, ncols
     xx, yy = xx.ravel(), yy.ravel() # flatten to 1d
 
+    # build gdf of points
     points = gpd.GeoDataFrame(
         {'x': xx, 'y': yy},
         geometry = gpd.points_from_xy(xx, yy),
         crs=grid.rio.crs
     )
-
-    return points
+    
+    # grab points within polygon
+    points_in_polygon = gpd.sjoin(points, polygons[['geometry']], predicate='within')
+    
+    return points_in_polygon[['x', 'y', 'geometry']].reset_index(drop=True)
 
 
 def attach_covariates(
