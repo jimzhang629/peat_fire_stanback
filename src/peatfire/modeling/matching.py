@@ -41,6 +41,8 @@ DEFAULT_SPILLOVER_M = 1000.0
 # ===========================================================================
 # PART A -- functions you implement (one per assignment stage)
 # ===========================================================================
+
+# hm this is unnecessary i think.
 def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
     """Stage 1. Completed restoration polygons, in EPSG:5070, with a pivot year.
 
@@ -73,11 +75,10 @@ def build_candidate_pool(
         Returns a GeoDataFrame (EPSG:5070) whose geometry does not overlap the
         treated polygons buffered by ``spillover_m``, with positive area.
     """
-    raise NotImplementedError(
-        "Stage 2: buffer `treated` by spillover_m, then overlay(how='difference') "
-        "against `peat_aoi`. The 'difference' is the inverse of a clip."
-    )
-
+    exclusion = gpd.GeoDataFrame(geometry=[treated.buffer(BUFFER_M).union_all()], crs=treated.crs)
+    candidates = gpd.overlay(aoi_nc_peat_80_histosol, exclusion, how='difference')
+    
+    return candidates
 
 def pixelate(
     polygons: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M

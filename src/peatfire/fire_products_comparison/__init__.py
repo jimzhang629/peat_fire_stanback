@@ -30,6 +30,7 @@ from .fire_comparison import (
     stack_on_common_grid,
     to_common_grid,
     total_least_squares,
+    rasterize_polygons_to_grid
 )
 from .reference_sources import (
     REFERENCE_SOURCES,

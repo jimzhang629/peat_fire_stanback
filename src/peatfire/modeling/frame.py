@@ -53,16 +53,19 @@ DEFAULT_RES_M = 300.0
 # Treatment layer (restoration sites)
 # ---------------------------------------------------------------------------
 def load_restoration_sites(path: Optional[Path] = None, restoration_yr_col: str = 'End_Yr') -> gpd.GeoDataFrame:
-    """Load the peatland-restoration polygons, reprojected to the analysis CRS.
-
-    Defaults to the processed NC pocosin restoration shapefile. The returned
-    GeoDataFrame is in EPSG:5070 (so buffers/distances are in metres). Any column
-    that looks like a restoration date is surfaced as ``restoration_year`` to
-    support pre/post-restoration matching downstream; if none is found the column
-    is left as ``NaN`` (fill it in once the attribute schema is confirmed).
+    """Load the peatland-restoration polygons, reprojected to the analysis CRS and dropping rows with 0's in the restoration_yr_col.
     
+    Parameters
+    ----------
+    path : Path
+        Path to the restoration sites shapefile. Has a default location.
     restoration_yr_col : str
         The column to treat as the restoration year (i.e., 'Start_Yr' or 'End_Yr').
+    
+    Returns
+    -------
+    gdf : gpd.GeoDataFrame
+        The gdf with 0 rows in the restoration_yr_col dropped and reprojected to the ANALYSIS_CRS
     """
     if path is None:
         path = data_path(
