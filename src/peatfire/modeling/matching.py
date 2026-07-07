@@ -42,7 +42,7 @@ DEFAULT_SPILLOVER_M = 1000.0
 # PART A -- functions you implement (one per assignment stage)
 # ===========================================================================
 
-# hm this is unnecessary i think.
+# hm this is unnecessary i think - load_completed_restoration_sites_in_analysis_crs does this already
 def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
     """Stage 1. Completed restoration polygons, in EPSG:5070, with a pivot year.
 
@@ -56,7 +56,7 @@ def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
     """
     raise NotImplementedError(
         "Stage 1: load restoration sites, keep completed, attach a pivot_year. "
-        "See load_restoration_sites() in frame.py for the raw loader."
+        "See load_completed_restoration_sites_in_analysis_crs() in frame.py for the raw loader."
     )
 
 

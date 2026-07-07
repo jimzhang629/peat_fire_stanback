@@ -29,7 +29,7 @@ from .covariates import (
 from .frame import (
     build_frame,
     build_modeling_grid,
-    load_restoration_sites,
+    load_completed_restoration_sites_in_analysis_crs,
 )
 from .models import (
     fit_logit_clustered,
@@ -64,7 +64,7 @@ __all__ = [
     "load_covariate",
     "build_frame",
     "build_modeling_grid",
-    "load_restoration_sites",
+    "load_completed_restoration_sites_in_analysis_crs",
     "fit_logit_clustered",
     "fit_mixed_logit",
     "odds_ratios",

@@ -52,20 +52,18 @@ DEFAULT_RES_M = 300.0
 # ---------------------------------------------------------------------------
 # Treatment layer (restoration sites)
 # ---------------------------------------------------------------------------
-def load_restoration_sites(path: Optional[Path] = None, restoration_yr_col: str = 'End_Yr') -> gpd.GeoDataFrame:
-    """Load the peatland-restoration polygons, reprojected to the analysis CRS and dropping rows with 0's in the restoration_yr_col.
+def load_restoration_sites(path: Optional[Path] = None) -> gpd.GeoDataFrame:
+    """Load peat-restoration polygons as a gdf
     
     Parameters
     ----------
     path : Path
         Path to the restoration sites shapefile. Has a default location.
-    restoration_yr_col : str
-        The column to treat as the restoration year (i.e., 'Start_Yr' or 'End_Yr').
-    
+        
     Returns
     -------
     gdf : gpd.GeoDataFrame
-        The gdf with 0 rows in the restoration_yr_col dropped and reprojected to the ANALYSIS_CRS
+        The loaded restoration sites as a gdf
     """
     if path is None:
         path = data_path(
@@ -74,7 +72,45 @@ def load_restoration_sites(path: Optional[Path] = None, restoration_yr_col: str 
             "NC_Pocosin_Restoration_Sites_2026",
             "NC_Pocosin_Restoration_Sites_2026.shp",
         )
-    gdf = gpd.read_file(path).to_crs(ANALYSIS_CRS)
+        
+    gdf = gpd.read_file(path)
+    
+    return gdf
+
+def load_restoration_sites_in_analysis_crs(path: Optional[Path] = None) -> gpd.GeoDataFrame:
+    """Load peat-restoration polygons as a gdf in ANALYSIS_CRS
+    
+    Parameters
+    ----------
+    path : Path
+        Path to the restoration sites shapefile. Has a default location.
+        
+    Returns
+    -------
+    gdf : gpd.GeoDataFrame
+        The loaded restoration sites as a gdf in ANALYSIS_CRS
+    """
+    gdf = load_restoration_sites(path)
+    gdf = gdf.to_crs(ANALYSIS_CRS)
+    
+    return gdf
+
+def load_completed_restoration_sites_in_analysis_crs(path: Optional[Path] = None, restoration_yr_col: str = 'End_Yr') -> gpd.GeoDataFrame:
+    """Load the completed peatland-restoration polygons, reprojected to the analysis CRS and dropping rows with 0's in the restoration_yr_col.
+    
+    Parameters
+    ----------
+    path : Path
+        Path to the restoration sites shapefile. Has a default location.
+    restoration_yr_col : str
+        The column to treat as the restoration year (i.e., 'Start_Yr' or 'End_Yr'). If a row is 0 in this column, it will be dropped.
+    
+    Returns
+    -------
+    gdf : gpd.GeoDataFrame
+        The gdf with rows marked as 0 in the restoration_yr_col dropped and reprojected to the ANALYSIS_CRS
+    """
+    gdf = load_restoration_sites_in_analysis_crs(path)
 
     # set the restoration year as the 'End_Yr' rather than the 'Start_Yr' for now, and replace placeholder 0's with nan
     # some sites have 'Status_202' = 'Completed' but no 'End_Yr' yet. Ask Eric about these, but leave them out for now.
@@ -82,14 +118,12 @@ def load_restoration_sites(path: Optional[Path] = None, restoration_yr_col: str 
     gdf = gdf.dropna(subset=restoration_yr_col)
     return gdf
 
-
 # ---------------------------------------------------------------------------
 # Grid <-> unit labelling
 # ---------------------------------------------------------------------------
 def build_modeling_grid(aoi: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M) -> xr.DataArray:
     """Empty EPSG:5070 grid covering ``aoi`` -- thin wrapper over the fire grid."""
     return build_common_grid(aoi, res_m=res_m)
-
 
 def _rasterize_values(
     gdf: gpd.GeoDataFrame, values: Sequence, grid: xr.DataArray, fill=np.nan
