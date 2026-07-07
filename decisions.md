@@ -38,6 +38,21 @@ log each methodological choice
   condition first. Rare-event handling: Firth-penalized logistic if separation
   appears; Tweedie/hurdle for burned *area* as the DV.
 
+- **Staggered difference-in-differences offered as the stronger estimator**
+  (`src/peatfire/modeling/did.py`), alongside the levels-based GLM/GLMM. Following
+  Castro et al. (2026), who evaluate canal-block rewetting → peat fire in
+  Kalimantan, the design is *match first (matching.py), then* estimate the
+  Callaway & Sant'Anna (2021) staggered, doubly-robust ATT. Identifying off the
+  pre/post change (treatment group = restoration `pivot_year`, controls = never-/
+  not-yet-restored, `g = 0`) differences out every time-invariant confounder, not
+  just the matched covariates. The outcome regression carries Castro's Eq. 1 fire
+  history — a temporal lag (fire t-1) and a 4-neighbour spatial lag
+  (`add_fire_lags`); SEs cluster on `site_id` (their village). Backend is the
+  pure-Python `differences` package (or R `did` via rpy2 = their Stata `csdid`).
+  Caveat vs Castro: their 11.3M pixel-years support per-subdistrict×vintage
+  counterfactuals; our few NC sites support at most one pooled ATT + an
+  event-study parallel-trends check, so sub-group effects stay underpowered.
+
 ## Fire-product comparison toolkit (src/peatfire/fire_products.py, fire_comparison.py, plotting.py)
 
 - **Analysis CRS = EPSG:5070 (NAD83 / CONUS Albers Equal Area)**, fixed for all

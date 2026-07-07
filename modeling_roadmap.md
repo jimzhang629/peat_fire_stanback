@@ -174,6 +174,88 @@ headline; everything else is an adjusted covariate.
   Drive it from a `notebooks/modeling.ipynb`.
 - Log every choice that has a defensible alternative in `decisions.md`.
 
+## 7. Alternative estimator — staggered difference-in-differences
+
+Everything above matches on observed covariates and then reads the treatment
+effect off the *levels* (an odds ratio for `treated`). That is only as good as the
+covariates we measured: an unmeasured, persistent difference between restored and
+unrestored peat (drainage legacy, soil, access) still biases the effect. The
+peatland-fire literature's stronger design — **match first, then estimate a
+staggered difference-in-differences (DiD)** — removes every *time-invariant*
+confounder by identifying off the **change** in burning after each site's
+restoration, relative to not-yet/never-restored controls. This is exactly what
+**Castro et al. (2026)** do for canal-block rewetting in Kalimantan, and our data
+already has the one ingredient it needs: restoration **dates** (`pivot_year`) and
+planned-but-not-yet-restored sites (natural not-yet-treated controls).
+
+What Castro et al. do, and how it maps onto our pipeline:
+
+| Castro et al. (2026), Kalimantan | our analogue |
+|----------------------------------|--------------|
+| Treated = 250 m upstream semicircle of each canal block; control = rest of a 2 km buffer | treated = restoration polygons; control = matched unrestored peat (matching.py) |
+| Match 1:1, Mahalanobis, no replacement, **exact on subdistrict + peat depth**, |SMD| ≤ 0.2 | our Stage 5 matching (add exact-match keys; tighten caliper) |
+| Match on **propensity + prognostic scores** + pre-treatment fire history (t-1, t-2, 2015 drought) | extend matching inputs beyond raw covariates |
+| Outcome = binary fire, 50 m pixel-year (MODIS MCD64A1, ≤10% uncertainty) | `build_frame` pixel-year `burned` (swappable DV) |
+| Estimator = **Callaway & Sant'Anna (2021)** staggered DiD, **doubly robust**, `csdid` in Stata | `modeling/did.py` (`estimate_att`, `differences` pkg or R `did`) |
+| Outcome eq. (their Eq. 1): distances, climate, night-lights, **temporal lag** (fire t-1) + **spatial lag** (4 neighbours) | `add_fire_lags` builds both lags; pass as DiD covariates |
+| Group = canal-block **construction vintage**; controls = never-/not-yet-treated | `attach_cohort` sets `g = pivot_year`, controls `g = 0` |
+| SEs clustered at **village**; report only results with 80% power | cluster on `site_id`; check power at our (smaller) N |
+| Headline = ATT × rewetted area = avoided burned area | `avoided_area(att, area_ha)` |
+
+Where it differs from Castro et al. and matters for us: **N**. They have 11.3M
+pixel-years and estimate a separate counterfactual per subdistrict × vintage ×
+block type. Our handful of NC restoration sites will not support that slicing —
+expect one pooled ATT plus, at most, an event-study path, and treat sub-group
+effects as underpowered. Also: our within-site control is *matched landscape
+peat*, not a within-buffer donut, so the conditional-parallel-trends assumption
+leans harder on the match quality (Stage 6 balance) than theirs does.
+
+Implementation lives in `src/peatfire/modeling/did.py` and reuses `build_frame`:
+
+```python
+from peatfire.modeling import (
+    build_frame, attach_cohort, add_fire_lags, build_panel,
+    estimate_att, aggregate_att, avoided_area,
+)
+frame  = build_frame(units, product="FireCCIS311", years=range(2019, 2025))
+frame  = attach_cohort(frame, cohort_by=pivot_year_by_site)  # g = restoration yr, 0 = control
+frame  = add_fire_lags(frame, res_m=300)                     # Castro Eq. 1 lags
+panel  = build_panel(frame, covariates=["fire_neighbors", "fire_tm1", "elev", "histosol_pct"])
+att    = estimate_att(panel, est_method="dr", cluster="site_id")   # doubly-robust CS
+overall = aggregate_att(att, "simple")   # headline ATT
+events  = aggregate_att(att, "event")    # event study -> pre-trends check
+```
+
+The event-study pre-treatment coefficients are the **parallel-trends test**;
+Castro's planned-but-unbuilt placebo is our negative control (§ matching_assignment
+"negative control"). Keep the matched design either way — it is what makes
+conditional parallel trends credible.
+
+---
+
+## References
+
+**Methods (matched design + DiD)**
+- Stuart, E. A. (2010). *Matching Methods for Causal Inference: A Review and a Look
+  Forward.* Statistical Science 25(1), 1–21. — the readable review behind
+  `matching.py` (distances, calipers, SMD/love plots).
+- Ho, Imai, King & Stuart (2007). *Matching as Nonparametric Preprocessing for
+  Reducing Model Dependence in Parametric Causal Inference.* Political Analysis
+  15(3), 199–236. — the "match first, then model" two-step; the `MatchIt` package.
+- Callaway, B. & Sant'Anna, P. H. C. (2021). *Difference-in-Differences with
+  Multiple Time Periods.* Journal of Econometrics 225(2), 200–230. — the staggered,
+  doubly-robust ATT estimator in `did.py`.
+
+**Domain (matching / DiD applied to peat + fire)**
+- Castro et al. (2026). *Effective restoration can avoid peatland fires: Large
+  scale counterfactual assessment in Kalimantan, Indonesia.* iScience.
+  doi:10.1016/j.isci.2026.116041 — the study `did.py` implements.
+- *The Impact of Rewetting Peatland on Fire Hazard in Riau, Indonesia* (2023).
+  Sustainability 15(3), 2169. — propensity-score matching, peat + fire.
+- Nguyen Huy, Adjognon & Van Soest (2023). *Combatting Forest Fires in the
+  Drylands of Sub-Saharan Africa: Quasi-Experimental evidence.* — matching + DiD
+  on fire (Castro's methodological cite).
+
 ---
 
 ### TL;DR
