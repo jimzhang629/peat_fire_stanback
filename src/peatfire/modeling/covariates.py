@@ -92,7 +92,6 @@ class CovariateSpec:
             return self.resample
         return "mean" if self.role == "continuous" else "mode"
 
-
 # ---------------------------------------------------------------------------
 # Registry
 #

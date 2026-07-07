@@ -219,7 +219,7 @@ nc.soil <- get_ssurgo_fixed(
   label = "nc_soil",
   raw.dir = "data/raw/soil/ssurgo",
   extraction.dir = "data/interim/soil/ssurgo",
-  force.redo = TRUE
+  force.redo = FALSE
 )
 
 ################################################################################
@@ -232,7 +232,7 @@ nc.lc <- get_nlcd(
   year = 2019,
   dataset = "landcover",
   extraction.dir = "data/interim/land_cover/nlcd",
-  force.redo = TRUE
+  force.redo = FALSE
 )
 
 
