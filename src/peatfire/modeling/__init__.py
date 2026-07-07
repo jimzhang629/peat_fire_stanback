@@ -32,7 +32,6 @@ from .covariates import (
 )
 from .frame import (
     build_frame,
-    build_modeling_grid,
     load_completed_restoration_sites_in_analysis_crs,
 )
 from .models import (
@@ -75,7 +74,6 @@ __all__ = [
     "list_covariates",
     "load_covariate",
     "build_frame",
-    "build_modeling_grid",
     "load_completed_restoration_sites_in_analysis_crs",
     "fit_logit_clustered",
     "fit_mixed_logit",

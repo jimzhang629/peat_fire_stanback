@@ -15,7 +15,7 @@ Layout
   stage before moving on. You should not need to edit Part B.
 
 Everything is in the analysis CRS (EPSG:5070), so buffers and distances are in
-metres. Reuse the toolkit you already have: ``build_modeling_grid``,
+metres. Reuse the toolkit you already have: ``build_common_grid``,
 ``covariate_on_grid``, ``available_covariates``.
 """
 
@@ -31,7 +31,7 @@ import pandas as pd
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
 from .covariates import available_covariates, covariate_on_grid  # noqa: F401
-from .frame import DEFAULT_RES_M, build_modeling_grid  # noqa: F401
+from .frame import DEFAULT_RES_M  # noqa: F401
 
 # A pixel this close to a restoration site may be partially rewetted by it
 # (spillover) -- exclude it from the control pool. Tune per Stage 2.

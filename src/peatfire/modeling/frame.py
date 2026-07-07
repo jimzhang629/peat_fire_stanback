@@ -121,10 +121,6 @@ def load_completed_restoration_sites_in_analysis_crs(path: Optional[Path] = None
 # ---------------------------------------------------------------------------
 # Grid <-> unit labelling
 # ---------------------------------------------------------------------------
-def build_modeling_grid(aoi: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M) -> xr.DataArray:
-    """Empty EPSG:5070 grid covering ``aoi`` -- thin wrapper over the fire grid."""
-    return build_common_grid(aoi, res_m=res_m)
-
 def _rasterize_values(
     gdf: gpd.GeoDataFrame, values: Sequence, grid: xr.DataArray, fill=np.nan
 ) -> np.ndarray:
@@ -197,7 +193,7 @@ def build_frame(
                 f"supply {treated_col!r}, {site_id_col!r} (and ideally {unit_id_col!r})."
             )
 
-    grid = build_modeling_grid(units, res_m=res_m)
+    grid = build_common_grid(units, res_m=res_m)
 
     # --- which grid cell belongs to which unit (and its treated/site labels) ---
     unit_ids = _rasterize_values(units, units[unit_id_col], grid)

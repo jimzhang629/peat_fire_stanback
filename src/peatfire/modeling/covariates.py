@@ -107,7 +107,7 @@ COVARIATES: dict[str, CovariateSpec] = {
         role="continuous",
         # /data/processed/topography/GLO30_DEM/GLO30_DEM.tif
         root_parts=("processed", "topography", "GLO30_DEM"),
-        glob="GLO30_DEM.tif",
+        glob="GLO30_DEM_nc.tif",
         native_res_m=30.0,
         source="Copernicus GLO-30 DEM (metres above sea level).",
     ),
