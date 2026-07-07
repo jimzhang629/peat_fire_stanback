@@ -11,6 +11,10 @@ Three layers, mirroring the fire-comparison toolkit:
 * :mod:`frame` -- assembles the tidy ``[unit, year, covariates..., burned]``
   table from an upstream-matched set of treated + control units.
 * :mod:`models` -- cluster-robust / mixed logistic fits, reported as odds ratios.
+* :mod:`did` -- staggered difference-in-differences (Callaway & Sant'Anna, as in
+  Castro et al. 2026): match, then identify off the pre/post change so
+  time-invariant confounders difference out. An alternative estimator on the same
+  ``build_frame`` output.
 
 The upstream **matching** step (choosing control pixels for each restoration
 site) is deliberately left out of this package so the causal design stays
@@ -35,6 +39,14 @@ from .models import (
     fit_logit_clustered,
     fit_mixed_logit,
     odds_ratios,
+)
+from .did import (  # staggered DiD alternative (Castro et al. 2026)
+    add_fire_lags,
+    aggregate_att,
+    attach_cohort,
+    avoided_area,
+    build_panel,
+    estimate_att,
 )
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
     assemble_units,
@@ -68,6 +80,12 @@ __all__ = [
     "fit_logit_clustered",
     "fit_mixed_logit",
     "odds_ratios",
+    "add_fire_lags",
+    "aggregate_att",
+    "attach_cohort",
+    "avoided_area",
+    "build_panel",
+    "estimate_att",
     "assemble_units",
     "attach_covariates",
     "balance_table",

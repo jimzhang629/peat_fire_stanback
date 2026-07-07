@@ -24,4 +24,5 @@ dependencies:
   - ipykernel
   - pip
   - pip:
-      - pymatch   # <-- propensity-score control matching (pip-only); optional
+      - pymatch      # <-- propensity-score control matching (pip-only); optional
+      - differences  # <-- Callaway-Sant'Anna staggered DiD (modeling/did.py); optional
