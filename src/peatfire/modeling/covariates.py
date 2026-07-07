@@ -127,7 +127,7 @@ COVARIATES: dict[str, CovariateSpec] = {
         name="land_cover",
         role="categorical",
         # LandFire Existing Vegetation Type (2024). Categorical -> majority class.
-        root_parts=("processed", "land_cover", "landfire_evt"),
+        root_parts=("processed", "land_cover", "LF2024_EVT_NC"),
         glob="landfire_evt_*_nc.tif",
         native_res_m=30.0,
         source="LandFire EVT (https://landfire.gov/vegetation/evt).",

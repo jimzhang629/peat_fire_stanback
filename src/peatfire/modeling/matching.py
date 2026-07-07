@@ -29,7 +29,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS
+from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
 from .covariates import available_covariates, covariate_on_grid  # noqa: F401
 from .frame import DEFAULT_RES_M, build_modeling_grid  # noqa: F401
 
@@ -63,8 +63,8 @@ def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
 def build_candidate_pool(
     peat_aoi: gpd.GeoDataFrame,
     treated: gpd.GeoDataFrame,
-    spillover_m: float = DEFAULT_SPILLOVER_M,
-) -> gpd.GeoDataFrame:
+    spillover_m: float = DEFAULT_SPILLOVER_M
+    ) -> gpd.GeoDataFrame:
     """Stage 2. Peat area that is neither treated nor within the spillover halo.
 
     Figure out: how to get a peat polygon from the histosol raster (>=80); how to
@@ -75,9 +75,14 @@ def build_candidate_pool(
         Returns a GeoDataFrame (EPSG:5070) whose geometry does not overlap the
         treated polygons buffered by ``spillover_m``, with positive area.
     """
-    exclusion = gpd.GeoDataFrame(geometry=[treated.buffer(BUFFER_M).union_all()], crs=treated.crs)
-    candidates = gpd.overlay(aoi_nc_peat_80_histosol, exclusion, how='difference')
-    
+    # project to the same crs first
+    treated = treated.to_crs(ANALYSIS_CRS)
+    peat_aoi = peat_aoi.to_crs(ANALYSIS_CRS)
+
+    # exclude pixels in a buffer zone around the treated sites, keep remaining peat pixels as candidates
+    exclusion = gpd.GeoDataFrame(geometry=[treated.buffer(spillover_m).union_all()], crs=treated.crs)
+    candidates = gpd.overlay(peat_aoi, exclusion, how='difference')
+
     return candidates
 
 def pixelate(
@@ -121,6 +126,48 @@ def pixelate(
     
     return points_in_polygon[['x', 'y', 'geometry']].reset_index(drop=True)
 
+def get_treated_and_control_pixels(
+    peat_aoi, treated, spillover_m=1000, res_m=300, treated_col_name="treated"
+):
+    """Build the labelled treated/control pixel set on one shared grid.
+
+    Orchestrates Stages 2-3: derive the control candidate pool, lay a single
+    common grid over the full peat AOI, pixelate the treated polygons and the
+    candidate pool onto that grid, and tag each pixel with its treatment status.
+    Because both sets are pixelated against the *same* grid, treated and control
+    points are co-registered and directly comparable.
+
+    Parameters
+    ----------
+    peat_aoi : geopandas.GeoDataFrame
+        Full peat area of interest (EPSG:5070). Defines the common grid extent
+        and is the source area for the control candidate pool.
+    treated : geopandas.GeoDataFrame
+        Completed restoration polygons (EPSG:5070) -- the treated units.
+    spillover_m : float, default 1000
+        Buffer (metres) around treated sites excluded from the candidate pool
+        to avoid rewetting spillover contamination.
+    res_m : float, default 300
+        Grid resolution in metres (matched to the ~300 m FireCCIS311 fire product).
+    treated_col_name : str, default "treated"
+        Name of the 1/0 treatment-status column added to the output.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        Point GeoDataFrame (EPSG:5070) with columns ``["x", "y", "geometry",
+        <treated_col_name>]``, where the status column is 1 for treated pixels
+        and 0 for control pixels.
+    """
+    candidates = build_candidate_pool(peat_aoi, treated, spillover_m)
+
+    grid = build_common_grid(peat_aoi, res_m, ANALYSIS_CRS)
+
+    treated_pts = pixelate(treated, res_m, grid).assign(**{treated_col_name: 1})
+    control_pts = pixelate(candidates, res_m, grid).assign(**{treated_col_name: 0})
+    pixels = pd.concat([treated_pts, control_pts], ignore_index=True)
+
+    return pixels
 
 def attach_covariates(
     points: gpd.GeoDataFrame,
