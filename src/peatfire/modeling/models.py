@@ -20,6 +20,7 @@ pixel-year burning. Because fire is rare here, an odds ratio ~ a risk ratio.
 
 from __future__ import annotations
 
+import re
 from typing import Optional, Sequence
 
 import numpy as np
@@ -29,6 +30,31 @@ import pandas as pd
 def _formula(response: str, treatment: str, covariates: Sequence[str]) -> str:
     rhs = " + ".join([treatment, *covariates]) if covariates else treatment
     return f"{response} ~ {rhs}"
+
+
+def _model_columns(
+    frame: pd.DataFrame,
+    response: str,
+    treatment: str,
+    covariates: Sequence[str],
+    cluster: str,
+    formula: Optional[str],
+) -> list[str]:
+    """Frame columns the fit depends on (for NaN-checking and group alignment).
+
+    For the auto-built formula this is exact; for a custom ``formula`` it is a
+    best-effort match of frame columns named as whole-word tokens in the formula
+    (enough to catch the NaN-drop / cluster-misalignment failure modes). The
+    ``cluster`` column is always included since its groups must line up with the
+    design matrix.
+    """
+    if formula is None:
+        cols = [response, treatment, *covariates]
+    else:
+        tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", formula))
+        cols = [c for c in frame.columns if c in tokens]
+    # dedupe, preserve order, and always keep the clustering key
+    return list(dict.fromkeys([*cols, cluster]))
 
 
 def fit_logit_clustered(
@@ -68,11 +94,47 @@ def fit_logit_clustered(
     import statsmodels.formula.api as smf
 
     formula = formula or _formula(response, treatment, covariates)
-    model = smf.logit(formula, data=frame)
+
+    # Drop NaN rows ourselves rather than letting statsmodels' missing='drop' do
+    # it silently: (1) so we can raise an actionable error when nothing survives
+    # instead of numpy's opaque "zero-size array to reduction" from an empty
+    # design matrix, and (2) so the cluster groups stay aligned with the design
+    # matrix -- passing the full-length frame[cluster] against a frame statsmodels
+    # has already thinned would mismatch nobs at fit time.
+    cols = _model_columns(frame, response, treatment, covariates, cluster, formula)
+    missing_cols = [c for c in cols if c not in frame.columns]
+    if missing_cols:
+        raise ValueError(
+            f"frame is missing columns required by the fit: {missing_cols}. "
+            f"Available columns: {list(frame.columns)}."
+        )
+    if frame.empty:
+        raise ValueError(
+            "frame has no rows to fit -- build_frame produced an empty table "
+            "(no units, or the fire product had no coverage for these years)."
+        )
+
+    clean = frame.dropna(subset=cols)
+    if clean.empty:
+        all_nan = [c for c in cols if frame[c].isna().all()]
+        detail = (
+            f" Columns entirely NaN over the frame: {all_nan}."
+            if all_nan
+            else " No single column is all-NaN, so different rows are missing "
+            "different fields; check the covariate alignment/coverage."
+        )
+        raise ValueError(
+            f"No complete rows to fit {formula!r}: all {len(frame)} rows have a "
+            f"NaN in one of {cols}." + detail + " A covariate that does not cover "
+            "the study area (or is misaligned to the grid) will null every pixel "
+            "and wipe out the fit -- drop it from `covariates` or fix its layer."
+        )
+
+    model = smf.logit(formula, data=clean)
     return model.fit(
         disp=False,
         cov_type="cluster",
-        cov_kwds={"groups": frame[cluster]},
+        cov_kwds={"groups": clean[cluster]},
     )
 
 
