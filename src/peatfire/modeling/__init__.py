@@ -57,6 +57,7 @@ from .climate import (  # GHCN station points -> gridded climate-normal covariat
 from .soil import (  # SSURGO soil polygons -> gridded soil covariates
     build_soil_rasters,
     inspect_soil_columns,
+    mukey_attribute,
 )
 from .plotting import (  # step-by-step data-inspection diagnostics
     plot_covariate_maps,
@@ -100,6 +101,7 @@ __all__ = [
     "write_climate_normals",
     "build_soil_rasters",
     "inspect_soil_columns",
+    "mukey_attribute",
     "plot_covariate_maps",
     "plot_covariate_pairs",
     "plot_covariate_space",
