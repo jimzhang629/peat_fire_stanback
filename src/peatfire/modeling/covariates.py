@@ -121,6 +121,70 @@ COVARIATES: dict[str, CovariateSpec] = {
         native_res_m=30.0,
         source="gSSURGO major-histosol percentage (Lilleskov et al. 2025).",
     ),
+    # --- climate normals (interpolated from GHCN stations by modeling.climate) --
+    # Static per-pixel climatology (a stable *site* characteristic), the spatial
+    # signal the match needs beyond elevation + near-constant histosol %. Built and
+    # written to processed/climate/ by climate.build_climate_normals +
+    # write_climate_normals; year-specific weather stays a temporal (DiD) covariate.
+    "precip_normal": CovariateSpec(
+        name="precip_normal",
+        role="continuous",
+        # /data/processed/climate/precip_normal_nc.tif  (mean annual PRCP, mm)
+        root_parts=("processed", "climate"),
+        glob="precip_normal_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily PRCP normal, IDW-interpolated (modeling.climate).",
+    ),
+    "tmax_normal": CovariateSpec(
+        name="tmax_normal",
+        role="continuous",
+        # /data/processed/climate/tmax_normal_nc.tif  (mean annual TMAX, deg C)
+        root_parts=("processed", "climate"),
+        glob="tmax_normal_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily TMAX normal, IDW-interpolated (modeling.climate).",
+    ),
+    "tmin_normal": CovariateSpec(
+        name="tmin_normal",
+        role="continuous",
+        # /data/processed/climate/tmin_normal_nc.tif  (mean annual TMIN, deg C)
+        root_parts=("processed", "climate"),
+        glob="tmin_normal_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily TMIN normal, IDW-interpolated (modeling.climate).",
+    ),
+    # --- SSURGO soil properties (gridded rasters on disk) -----------------------
+    # gSSURGO map-unit properties rasterised to 30 m. Continuous properties are
+    # area-averaged onto the grid; drainage class is categorical (majority class).
+    # Globs match a `processed/soil/` layout -- rename the glob if your SSURGO
+    # export uses different filenames; an absent file simply skips (with a warning).
+    "soil_organic_matter": CovariateSpec(
+        name="soil_organic_matter",
+        role="continuous",
+        # /data/processed/soil/ssurgo/ssurgo_organic_matter_nc.tif  (% by weight)
+        root_parts=("processed", "soil", "ssurgo"),
+        glob="ssurgo_organic_matter*_nc.tif",
+        native_res_m=30.0,
+        source="gSSURGO organic-matter content (om_r), fuel-load proxy.",
+    ),
+    "soil_awc": CovariateSpec(
+        name="soil_awc",
+        role="continuous",
+        # /data/processed/soil/ssurgo/ssurgo_awc_nc.tif  (available water capacity)
+        root_parts=("processed", "soil", "ssurgo"),
+        glob="ssurgo_awc*_nc.tif",
+        native_res_m=30.0,
+        source="gSSURGO available water capacity (awc_r), moisture-retention proxy.",
+    ),
+    "soil_drainage_class": CovariateSpec(
+        name="soil_drainage_class",
+        role="categorical",
+        # /data/processed/soil/ssurgo/ssurgo_drainage_class_nc.tif  (coded classes)
+        root_parts=("processed", "soil", "ssurgo"),
+        glob="ssurgo_drainage_class*_nc.tif",
+        native_res_m=30.0,
+        source="gSSURGO drainage class (drainagecl), coded ordinal -> majority class.",
+    ),
     # --- not yet downloaded: registered so they attach automatically later ---
     "land_cover": CovariateSpec(
         name="land_cover",
