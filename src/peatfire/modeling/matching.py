@@ -32,29 +32,59 @@ import xarray as xr
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
 from .covariates import available_covariates, covariate_on_grid  # noqa: F401
-from .frame import DEFAULT_RES_M  # noqa: F401
+from .frame import (  # noqa: F401
+    DEFAULT_RES_M,
+    load_completed_restoration_sites_in_analysis_crs,
+)
 
 from sklearn.neighbors import NearestNeighbors
 # A pixel this close to a restoration site may be partially rewetted by it
 # (spillover) -- exclude it from the control pool. Tune per Stage 2.
 DEFAULT_SPILLOVER_M = 1000.0
 
-# hm this is unnecessary i think - load_completed_restoration_sites_in_analysis_crs does this already
-def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
+def load_treated_units(
+    path: Optional[Path] = None,
+    restoration_yr_col: str = "End_Yr",
+    site_col: str = "Proj_Name",
+) -> gpd.GeoDataFrame:
     """Stage 1. Completed restoration polygons, in EPSG:5070, with a pivot year.
 
     Figure out: which column encodes status; your rule for "completed"; how you
     handle a missing end year; which year becomes the pivot (you chose end year).
+
+    Design choices
+    --------------
+    * "Completed" == has a real restoration *end* year. The raw loader
+      :func:`load_completed_restoration_sites_in_analysis_crs` already encodes
+      that rule: it reprojects to EPSG:5070 and drops any site whose
+      ``restoration_yr_col`` is 0/NaN (a placeholder for "no end year yet"), so
+      what comes back is exactly the finished sites.
+    * The **pivot year** is the restoration end year (``End_Yr``) -- the moment a
+      site flips from unrestored to restored, i.e. the event time everything
+      downstream (per-year ``treated``, DiD cohort ``g``) keys off.
+    * ``site_id`` is the project name where present, else a positional fallback,
+      so every completed site has a stable identifier.
 
     Contract (verified by :func:`check_treated_units`)
         Returns a GeoDataFrame in EPSG:5070 with at least columns
         ``["site_id", "pivot_year", "geometry"]``, one row per completed site,
         every ``pivot_year`` non-null.
     """
-    raise NotImplementedError(
-        "Stage 1: load restoration sites, keep completed, attach a pivot_year. "
-        "See load_completed_restoration_sites_in_analysis_crs() in frame.py for the raw loader."
-    )
+    gdf = load_completed_restoration_sites_in_analysis_crs(
+        path, restoration_yr_col=restoration_yr_col
+    ).copy()
+
+    # The pivot year is the restoration end year (guaranteed non-null / non-zero
+    # by the loader). Cast to a plain integer year.
+    gdf["pivot_year"] = gdf[restoration_yr_col].astype("int64")
+
+    # Stable per-site id: the project name when it exists, else the row position.
+    if site_col in gdf.columns:
+        gdf["site_id"] = gdf[site_col].astype(str)
+    else:
+        gdf["site_id"] = np.arange(len(gdf)).astype(str)
+
+    return gdf.reset_index(drop=True)
 
 
 def build_candidate_pool(
@@ -347,14 +377,32 @@ def match_controls(
     caliper: float = 1.0,
     k: int = 1,
     treated_col: str = "treated",
+    replace: bool = False,
 ) -> gpd.GeoDataFrame:
     """Stage 5. Pair each treated pixel with its nearest control(s).
 
-    Figure out: why standardize before computing distances; Euclidean vs
-    Mahalanobis (what does Mahalanobis fix given elevation<->coast are
-    correlated?); how to *exact-match* on ``categorical`` instead of putting it in
-    the distance; what a caliper means and in what units; with/without
-    replacement and the ``k`` ratio.
+    Why each step is here:
+
+    * **Standardize before distances.** Elevation (metres, ~0-50) and histosol %
+      (0-100) live on different scales; raw Euclidean distance would be dominated
+      by whichever covariate has the bigger numeric spread. We whiten first so
+      every covariate contributes on equal footing.
+    * **Mahalanobis, not plain Euclidean.** Elevation and drainage/coast distance
+      are *correlated*, so Euclidean distance double-counts the shared signal.
+      Whitening by ``cov^{-1/2}`` decorrelates the covariates, turning plain
+      Euclidean distance in the whitened space into Mahalanobis distance in the
+      original space.
+    * **Exact-match categoricals.** A categorical like land cover doesn't belong
+      in a numeric distance (the codes are labels, not magnitudes), so we
+      *stratify*: a treated pixel is only ever matched to controls of the **same
+      class**, and the continuous distance is computed within that class.
+    * **Caliper.** A distance ceiling (in whitened / SD units): a treated pixel
+      with no control inside the caliper is dropped rather than matched to a poor
+      twin. How many get dropped is a design diagnostic -- it's printed.
+    * **Replacement.** ``replace=False`` (default) gives disjoint controls (each
+      control used at most once); ``replace=True`` lets a good control serve
+      several treated pixels (better balance, but reused controls -- the checker
+      warns, not errors).
 
     Contract (verified by :func:`check_matches`)
         Returns treated + matched control pixels as one GeoDataFrame with columns
@@ -369,7 +417,6 @@ def match_controls(
     # repeats. Matching is on static covariates, so collapse to unique pixels
     # and label the group by restoration-site membership.
     if "restoration_year" in df.columns:
-        is_treated = df["restoration_year"].notna()
         # one row per physical pixel for the matching step
         cross = df.drop_duplicates(subset=["x", "y"]).copy()
         cross["_grp_treated"] = cross["restoration_year"].notna().astype(int)
@@ -383,56 +430,101 @@ def match_controls(
     X = cross[cont].to_numpy(dtype=float)
 
     # --- 3. Whiten so plain Euclidean == Mahalanobis ---------------------
-    # cov of the pooled covariates; W = cov^{-1/2}; Xw = (X - mean) @ W
-    # TODO(you): compute mean, covariance, and the inverse-sqrt (hint:
-    #   np.linalg.eigh on the covariance, or scipy.linalg.sqrtm of the inverse).
-    #   Guard against a singular covariance (add a tiny ridge to the diagonal).
-    Xw = ...  # whitened, shape (n_pixels, n_cont)
+    # W = cov^{-1/2}; Xw = (X - mean) @ W. In Xw, ordinary Euclidean distance
+    # equals Mahalanobis distance in the original covariate space.
+    mean = X.mean(axis=0)
+    Xc = X - mean
+    # np.cov wants variables in rows; rowvar=False keeps them in columns.
+    cov = np.atleast_2d(np.cov(Xc, rowvar=False))
+    # Ridge the diagonal so a (near-)singular covariance still inverts -- e.g. if
+    # two covariates are collinear, or a class has too few pixels to estimate it.
+    cov += 1e-6 * np.eye(cov.shape[0])
+    # Symmetric eigendecomposition -> inverse square root: cov = V diag(w) V^T,
+    # so cov^{-1/2} = V diag(w^{-1/2}) V^T.
+    evals, evecs = np.linalg.eigh(cov)
+    evals = np.clip(evals, 1e-12, None)  # guard tiny/negative eigenvalues
+    W = evecs @ np.diag(1.0 / np.sqrt(evals)) @ evecs.T
+    Xw = Xc @ W  # whitened, shape (n_pixels, n_cont)
+
     cross_w = cross.assign(**{f"_z{i}": Xw[:, i] for i in range(Xw.shape[1])})
     zcols = [f"_z{i}" for i in range(Xw.shape[1])]
+
+    # Columns each output row keeps: coordinates, geometry, the covariates, the
+    # exact-match keys, and (when present) site provenance for the panel/DiD.
+    extra = [c for c in ("Proj_Name", "restoration_year") if c in cross_w.columns]
+    keep_cols = ["x", "y", "geometry", *cont, *list(categorical), *extra]
+
+    def _record(row, is_treated: int, site_id: int, distance: float) -> dict:
+        rec = {col: row[col] for col in keep_cols}
+        rec[treated_col] = is_treated
+        rec["site_id"] = site_id
+        rec["match_distance"] = distance
+        return rec
 
     # --- 4. Exact-match on categoricals: match WITHIN each class ----------
     # Group so a treated pixel only sees controls of the same land cover.
     group_keys = list(categorical) if categorical else None
     groups = cross_w.groupby(group_keys) if group_keys else [((), cross_w)]
 
-    pairs = []  # collect matched (treated_row, control_row, distance)
+    pairs = []  # collect matched treated + control rows
     n_dropped = 0
+    stratum = 0  # unique id per matched treated pixel (the pair/stratum)
     for _, g in groups:
         t = g[g["_grp_treated"] == 1]
-        c = g[g["_grp_treated"] == 0]
+        c = g[g["_grp_treated"] == 0].reset_index(drop=True)
         if len(t) == 0 or len(c) == 0:
             n_dropped += len(t)   # treated with no same-class controls
             continue
 
-        nn = NearestNeighbors(n_neighbors=min(k, len(c)))
+        # Ask for enough neighbours that, matching without replacement, we can
+        # still fill k per treated pixel even as earlier controls get claimed.
+        n_ask = min(len(c), k if replace else k * len(t))
+        nn = NearestNeighbors(n_neighbors=n_ask)
         nn.fit(c[zcols].to_numpy())
-        dist, idx = nn.kneighbors(t[zcols].to_numpy())  # (n_t, k) each
+        dist, idx = nn.kneighbors(t[zcols].to_numpy())  # (n_t, n_ask) each
 
         # --- 5. caliper + assemble pairs ---------------------------------
-        # TODO(you): for each treated row i and its k neighbours:
-        #   - keep only neighbours with dist <= caliper (drop the treated
-        #     pixel entirely if none qualify -> increment n_dropped)
-        #   - decide replacement: with -> reuse controls freely; without ->
-        #     don't let a control index be claimed twice (track used idx)
-        #   - record: treated row, matched control row(s), the distance,
-        #     and a shared site_id for this stratum/pair
-        ...
+        used: set[int] = set()  # control positions already claimed (no-replace)
+        for i in range(len(t)):
+            chosen = []  # (control_position, distance) picked for this treated
+            for j in range(idx.shape[1]):
+                cpos, d = int(idx[i, j]), float(dist[i, j])
+                if d > caliper:
+                    break  # neighbours are distance-sorted -> the rest are too far
+                if not replace and cpos in used:
+                    continue
+                chosen.append((cpos, d))
+                if not replace:
+                    used.add(cpos)
+                if len(chosen) >= k:
+                    break
+            if not chosen:
+                n_dropped += 1  # no control within the caliper -> drop this treated
+                continue
+
+            sid = stratum
+            stratum += 1
+            t_row = t.iloc[i]
+            pairs.append(_record(t_row, 1, sid, 0.0))  # treated: distance 0
+            for cpos, d in chosen:
+                pairs.append(_record(c.iloc[cpos], 0, sid, d))
 
     # --- 6. Assemble output the checker wants ----------------------------
     # Columns required by check_matches: unit_id, site_id, treated_col,
-    # match_distance. Treated rows: distance 0 (or NaN); control rows: their
-    # distance to the treated partner. site_id = the pair/stratum id.
-    # TODO(you): turn `pairs` into rows, keep geometry, set the 4 columns.
-    matched = ...
+    # match_distance. Treated rows carry distance 0; control rows their distance
+    # to the treated partner; site_id is the shared pair/stratum id.
+    matched = gpd.GeoDataFrame(pairs, geometry="geometry", crs=cross.crs)
+    matched["unit_id"] = np.arange(len(matched))
 
-    print(f"[match] dropped {n_dropped} treated pixels with no control in caliper")
-
-    # --- 7. (optional) re-expand to the year panel -----------------------
-    # site_id / match_distance are time-invariant, so if you want the full
-    # panel back, merge these assignments onto `df` by ["x", "y"].
+    n_treated = int((matched[treated_col] == 1).sum())
+    n_control = int((matched[treated_col] == 0).sum())
+    print(
+        f"[match] {n_treated} treated matched to {n_control} controls "
+        f"(k={k}, caliper={caliper}, replace={replace}); "
+        f"dropped {n_dropped} treated pixels with no control in caliper"
+    )
     return matched
-    
+
 
 def balance_table(
     pixels: gpd.GeoDataFrame,
@@ -448,19 +540,63 @@ def balance_table(
     Contract
         Returns a DataFrame indexed by covariate with an ``smd`` column.
     """
-    raise NotImplementedError(
-        "Stage 6: for each covariate, split by treated_col and call "
-        "standardized_mean_diff(treated_vals, control_vals)."
-    )
+    df = pixels
+
+    # Define the two groups consistently with match_controls. On the *unmatched*
+    # pixel-year panel `treated_col` flips per year, so collapse to unique pixels
+    # and split by restoration-site membership; on a matched set (which carries a
+    # per-pair `site_id`) the static `treated_col` is already the right split.
+    if "restoration_year" in df.columns and "site_id" not in df.columns:
+        df = df.drop_duplicates(subset=["x", "y"])
+        is_treated = df["restoration_year"].notna()
+    else:
+        is_treated = df[treated_col] == 1
+
+    smds = {}
+    for name in continuous:
+        smds[name] = standardized_mean_diff(
+            df.loc[is_treated, name], df.loc[~is_treated, name]
+        )
+    return pd.DataFrame({"smd": pd.Series(smds)})
 
 
-def plot_balance(before: pd.DataFrame, after: pd.DataFrame):
+def plot_balance(before: pd.DataFrame, after: pd.DataFrame, ax=None):
     """Stage 6. Love plot: |SMD| per covariate, before vs after matching.
 
     The figure that justifies the design -- after-matching points should collapse
     toward zero. Style with :func:`peatfire.set_fire_style`.
+
+    Returns the matplotlib ``Axes`` so the caller can save the figure.
     """
-    raise NotImplementedError("Stage 6: scatter |smd| for `before` and `after`.")
+    import matplotlib.pyplot as plt
+
+    from ..fire_products_comparison.plotting import set_fire_style
+
+    set_fire_style()
+
+    covs = list(before.index)
+    ypos = np.arange(len(covs))
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 0.6 * len(covs) + 1.5))
+
+    # One dot per covariate for each of before / after; |SMD| shrinking toward 0
+    # after matching is the whole point of the plot.
+    ax.scatter(before["smd"].abs(), ypos, s=70, label="before matching", zorder=3)
+    ax.scatter(
+        after.reindex(covs)["smd"].abs(), ypos, s=70, label="after matching", zorder=3
+    )
+    # Connect each pair so the reader's eye follows the improvement per covariate.
+    for y, b, a in zip(ypos, before["smd"].abs(), after.reindex(covs)["smd"].abs()):
+        ax.plot([b, a], [y, y], color="0.7", lw=1, zorder=1)
+
+    ax.axvline(0.1, ls="--", color="0.4", lw=1, label="|SMD| = 0.1 (balanced)")
+    ax.set_yticks(ypos)
+    ax.set_yticklabels(covs)
+    ax.set_xlabel("|standardized mean difference|")
+    ax.set_title("Covariate balance: before vs after matching")
+    ax.set_xlim(left=0)
+    ax.legend()
+    return ax
 
 
 def assemble_units(matched: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -470,8 +606,20 @@ def assemble_units(matched: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         Returns a GeoDataFrame with ``["unit_id", "site_id", "treated",
         "geometry"]`` -- exactly what :func:`peatfire.build_frame` consumes.
     """
-    raise NotImplementedError(
-        "Stage 7: select/rename the matched columns; then build_frame(units)."
+    required = ["unit_id", "site_id", "treated", "geometry"]
+    missing = [c for c in required if c not in matched.columns]
+    if missing:
+        raise ValueError(
+            f"assemble_units: matched set is missing {missing}; run match_controls() first."
+        )
+
+    units = matched[required].copy()
+    # build_frame keys the clustering / DiD on `site_id`; make sure it is an
+    # integer stratum label (match_controls already assigns one per pair).
+    units["site_id"] = units["site_id"].astype("int64")
+    units["treated"] = units["treated"].astype("int64")
+    return gpd.GeoDataFrame(units, geometry="geometry", crs=matched.crs).reset_index(
+        drop=True
     )
 
 
