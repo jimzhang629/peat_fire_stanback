@@ -47,6 +47,24 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     build_panel,
     estimate_att,
 )
+from .climate import (  # GHCN station points -> gridded climate-normal covariates
+    build_climate_normals,
+    idw_to_grid,
+    load_ghcn_stations,
+    station_normals,
+    write_climate_normals,
+)
+from .soil import (  # SSURGO soil polygons -> gridded soil covariates
+    build_soil_rasters,
+    inspect_soil_columns,
+)
+from .plotting import (  # step-by-step data-inspection diagnostics
+    plot_covariate_maps,
+    plot_covariate_pairs,
+    plot_covariate_space,
+    plot_matched_pairs_covariate,
+    plot_matched_pairs_geographic,
+)
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
     assemble_units,
     attach_covariates,
@@ -75,6 +93,18 @@ __all__ = [
     "load_covariate",
     "build_frame",
     "load_completed_restoration_sites_in_analysis_crs",
+    "build_climate_normals",
+    "idw_to_grid",
+    "load_ghcn_stations",
+    "station_normals",
+    "write_climate_normals",
+    "build_soil_rasters",
+    "inspect_soil_columns",
+    "plot_covariate_maps",
+    "plot_covariate_pairs",
+    "plot_covariate_space",
+    "plot_matched_pairs_covariate",
+    "plot_matched_pairs_geographic",
     "fit_logit_clustered",
     "fit_mixed_logit",
     "odds_ratios",

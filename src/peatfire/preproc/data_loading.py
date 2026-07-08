@@ -93,6 +93,36 @@ def _as_raster(raster):
         return raster
     return rioxarray.open_rasterio(raster, masked=True)
 
+def read_vector_resilient(path, **kwargs):
+    """Read a vector file, working around GeoPackage "readonly database" errors.
+
+    A GeoPackage is a SQLite database. GDAL/pyogrio sometimes fails to *read* one
+    with ``attempt to write a readonly database`` when the file (or its directory)
+    is not writable, or a stale ``-wal``/``-shm`` lock sidecar is present -- SQLite
+    wants to touch the file even for a read. The fix is to read from a **writable
+    copy**: this tries a direct read first and, on any failure, copies the file
+    (plus any ``-wal``/``-shm`` sidecars) into a fresh temp dir and reads that.
+
+    ``kwargs`` are forwarded to :func:`geopandas.read_file`.
+    """
+    import shutil
+    import tempfile
+
+    try:
+        return gpd.read_file(path, **kwargs)
+    except Exception:
+        src = Path(path)
+        tmp = Path(tempfile.mkdtemp(prefix="peatfire_gpkg_"))
+        dst = tmp / src.name
+        shutil.copy2(src, dst)
+        for side in ("-wal", "-shm"):  # SQLite lock/journal sidecars, if any
+            s = src.with_name(src.name + side)
+            if s.exists():
+                shutil.copy2(s, tmp / s.name)
+        os.chmod(dst, 0o644)
+        return gpd.read_file(dst, **kwargs)
+
+
 def clip_vector_to_mask(vector, mask):
     '''
     Clips vector to a mask (like nc bounds).

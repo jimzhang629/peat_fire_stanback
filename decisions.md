@@ -32,6 +32,48 @@ log each methodological choice
 - **Drainage is an area-weighted mean of HAND per unit**, not a centroid sample
   ("do weighted mean of drainage by area").
 
+- **Match on climate + soil, not elevation alone.** Histosol % is ~constant
+  (pinned near 90) across the 80% peat frame, so a match on `[elevation,
+  histosol_pct]` was effectively a match on **elevation only** -- and elevation
+  has many near-identical low-lying coastal-plain pixels, giving trivially small
+  match distances that balance almost nothing. The matchable covariate set is
+  widened to every **continuous** layer on disk: elevation, histosol %, the GHCN
+  **climate normals** (`precip_normal`, `tmax_normal`), and the **SSURGO soil**
+  layers (`soil_organic_matter`, `soil_awc`; `soil_drainage_class` as a
+  categorical exact-match key). Climate adds the coast-to-inland gradient the
+  match was missing.
+
+- **Climate enters as a static long-run *normal*, interpolated from GHCN points.**
+  The climate source (`get_climate&soil_data.R`) yields GHCN **station points**,
+  not a raster. `modeling/climate.py` collapses each station's daily record to a
+  climatological **normal** (annual precip total / mean tmax over a baseline,
+  default 1991-2020) and **IDW-interpolates** it onto the analysis grid, written
+  to `processed/climate/*.tif` so it registers as an ordinary covariate. A normal
+  (not a single year's weather) is the right thing to *match* on -- climate is a
+  near time-invariant *site* characteristic; year-specific weather is a temporal
+  covariate for the DiD/`treated:precip` interaction stage instead. IDW (KD-tree
+  + inverse-distance weights) is chosen over kriging as the transparent,
+  dependency-light interpolant that never extrapolates outside the station range,
+  which is all a match-only covariate needs; swap in kriging later without
+  changing the covariate contract (a GeoTIFF on the grid). Ingest formats match
+  what the R script actually writes: climate as GHCN `.Rds` long tables (read via
+  `pyreadr`, `modeling/climate.py`), and **soil as SSURGO polygons**
+  (`nc_soil_ssurgo.gpkg`) rasterised attribute-by-attribute onto the grid by
+  `modeling/soil.py` -- continuous properties burned as values, drainage class
+  factorised to codes and used as an **exact-match key** (matched within class),
+  not a continuous distance axis. GeoPackages are read through
+  `read_vector_resilient`, which copies to a writable temp on the SQLite
+  "readonly database" error some exports trigger.
+
+- **Step-by-step diagnostic plots (`modeling/plotting.py`).** Each pipeline stage
+  gets an inspection figure sharing the fire-comparison style: covariate coverage
+  **maps** over the AOI (a flat panel = a covariate with no spatial signal, e.g.
+  histosol %), treated-vs-control in **covariate space** (a collapsed axis makes
+  the elevation-only degeneracy visible) and a scatter **matrix** across all
+  covariate axes, and the matched pairs shown both in **covariate space** (short
+  segment = close twin) and **geographically** (long connecting line = control
+  drawn far away -> spatial-confounding flag).
+
 - **Models build from cluster-robust GLM -> mixed logistic GLMM
   (`burned ~ treated + drainage + covariates + (1|site) + (1|year)`) -> a
   treatment x climate interaction**, reported as odds ratios with CIs, peat
