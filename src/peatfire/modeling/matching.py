@@ -87,7 +87,10 @@ def build_candidate_pool(
     return candidates
 
 def pixelate(
-    polygons: gpd.GeoDataFrame, res_m: float = DEFAULT_RES_M, grid=None
+    polygons: gpd.GeoDataFrame,
+    res_m: float = DEFAULT_RES_M,
+    grid=None,
+    carry: Optional[Sequence[str]] = None,
 ) -> gpd.GeoDataFrame:
     """
     This projects polygons into res_m and onto a common grid, then gets the centers of each grid pixel within the polygons
@@ -98,13 +101,20 @@ def pixelate(
     Call this once for the treated area and once for the candidate pool, tag each
     with a ``treated`` (1/0) column, and concatenate.
 
+    ``carry`` optionally propagates polygon attribute columns (e.g. the site's
+    restoration year, its ``Proj_Name``) onto every pixel that falls inside that
+    polygon. This is how a treated pixel remembers *which* site -- and therefore
+    *which restoration year* -- it belongs to, which the calendar-year panel in
+    :func:`get_treated_and_control_pixels` needs. A pixel that lands inside two
+    overlapping polygons is returned once per polygon (the caller de-duplicates).
+
     Contract (verified by :func:`check_pixels`)
         Returns a point GeoDataFrame (EPSG:5070) with columns ``["x", "y",
-        "geometry"]``; ~ ``area / res_m**2`` rows.
+        "geometry", *carry]``; ~ ``area / res_m**2`` rows.
     """
     # reproject polygons to analysis crs first
     polygons = polygons.to_crs(ANALYSIS_CRS)
-    
+
     # build common grid if not already passed in
     if grid is None:
         grid = build_common_grid(polygons, res_m, ANALYSIS_CRS)
@@ -121,14 +131,39 @@ def pixelate(
         geometry = gpd.points_from_xy(xx, yy),
         crs=grid.rio.crs
     )
-    
-    # grab points within polygon
-    points_in_polygon = gpd.sjoin(points, polygons[['geometry']], predicate='within')
-    
-    return points_in_polygon[['x', 'y', 'geometry']].reset_index(drop=True)
+
+    # grab points within polygon, carrying along any requested polygon attributes
+    carry = list(carry or [])
+    points_in_polygon = gpd.sjoin(points, polygons[['geometry', *carry]], predicate='within')
+
+    return points_in_polygon[['x', 'y', 'geometry', *carry]].reset_index(drop=True)
+
+def _stack_across_years(points: gpd.GeoDataFrame, years: Sequence[int]) -> gpd.GeoDataFrame:
+    """Repeat every pixel once per calendar year, adding a ``year`` column.
+
+    The pixel *geometry* does not change from year to year, so we pixelate once
+    (an expensive spatial join) and cheaply broadcast the result across ``years``
+    rather than re-running the geometry per year.
+    """
+    frames = []
+    for year in years:
+        frame = points.copy()
+        frame["year"] = int(year)
+        frames.append(frame)
+    stacked = pd.concat(frames, ignore_index=True)
+    return gpd.GeoDataFrame(stacked, geometry="geometry", crs=points.crs)
+
 
 def get_treated_and_control_pixels(
-    peat_aoi, treated, spillover_m=1000, res_m: float = DEFAULT_RES_M, treated_col_name="treated"
+    peat_aoi,
+    treated,
+    years: Optional[Sequence[int]] = None,
+    spillover_m=1000,
+    res_m: float = DEFAULT_RES_M,
+    treated_col_name="treated",
+    restoration_yr_col: str = "End_Yr",
+    site_col: str = "Proj_Name",
+    drop_pretreatment: bool = False,
 ):
     """Build the labelled treated/control pixel set on one shared grid.
 
@@ -138,13 +173,39 @@ def get_treated_and_control_pixels(
     Because both sets are pixelated against the *same* grid, treated and control
     points are co-registered and directly comparable.
 
+    Calendar-year panel
+    -------------------
+    Treatment is an *event in time*: a restoration site is only "treated" once its
+    restoration year has passed. Pass ``years`` to expand the flat pixel set into a
+    tidy pixel-**year** panel (one row per pixel per calendar year) where, for each
+    calendar ``year``:
+
+    * a restoration-site pixel is ``treated == 1`` only if its site's restoration
+      year is at or before that ``year`` (``years_after_treatment >= 0``); in
+      earlier years it is a *not-yet-treated* pixel (``treated == 0``), which the
+      staggered-DiD design in :mod:`peatfire.modeling.did` uses as a control;
+    * ``years_after_treatment = year - restoration_year`` (0 = restoration year,
+      positive = years since restoration, negative = years before), matching the
+      ``event_year`` convention used in the fire-comparison notebook;
+    * every candidate-pool pixel is present in every year with ``treated == 0`` and
+      a null ``restoration_year`` / ``years_after_treatment``.
+
+    A pixel's restoration-site membership is therefore recoverable at any time as
+    ``restoration_year.notna()``, independent of the per-year ``treated`` status.
+
     Parameters
     ----------
     peat_aoi : geopandas.GeoDataFrame
         Full peat area of interest (EPSG:5070). Defines the common grid extent
         and is the source area for the control candidate pool.
     treated : geopandas.GeoDataFrame
-        Completed restoration polygons (EPSG:5070) -- the treated units.
+        Completed restoration polygons (EPSG:5070) -- the treated units. When
+        ``years`` is given, must carry ``restoration_yr_col`` (the site's
+        restoration year).
+    years : sequence of int, optional
+        Calendar years to build the panel over (e.g. ``range(2019, 2025)`` for
+        FireCCIS311). If ``None`` (default) the legacy time-flat set is returned:
+        one row per pixel, ``treated`` = static restoration-site membership.
     spillover_m : float, default 1000
         Buffer (metres) around treated sites excluded from the candidate pool
         to avoid rewetting spillover contamination.
@@ -152,35 +213,101 @@ def get_treated_and_control_pixels(
         Grid resolution in metres (matched to the ~300 m FireCCIS311 fire product).
     treated_col_name : str, default "treated"
         Name of the 1/0 treatment-status column added to the output.
+    restoration_yr_col : str, default "End_Yr"
+        Column on ``treated`` holding each site's restoration (pivot) year; carried
+        onto treated pixels and renamed ``restoration_year`` in the panel.
+    site_col : str, default "Proj_Name"
+        Site-identifier column on ``treated`` to carry onto treated pixels (kept if
+        present; ignored if absent).
+    drop_pretreatment : bool, default False
+        If True, drop restoration-site pixel-years *before* their restoration year
+        (keep only ``treated == 1`` rows for the treated group). Leave False to
+        retain them as not-yet-treated controls for a difference-in-differences.
 
     Returns
     -------
     geopandas.GeoDataFrame
-        Point GeoDataFrame (EPSG:5070) with columns ``["x", "y", "geometry",
-        <treated_col_name>]``, where the status column is 1 for treated pixels
-        and 0 for control pixels.
+        Point GeoDataFrame (EPSG:5070). Time-flat (``years is None``): columns
+        ``["x", "y", "geometry", <treated_col_name>]``. Calendar-year panel:
+        additionally ``["year", "restoration_year", "years_after_treatment"]`` and,
+        when present, ``site_col``.
     """
     candidates = build_candidate_pool(peat_aoi, treated, spillover_m)
 
     grid = build_common_grid(peat_aoi, res_m, ANALYSIS_CRS)
 
-    treated_pts = pixelate(treated, res_m, grid).assign(**{treated_col_name: 1})
-    control_pts = pixelate(candidates, res_m, grid).assign(**{treated_col_name: 0})
-    pixels = pd.concat([treated_pts, control_pts], ignore_index=True)
+    # --- legacy time-flat behaviour: one row per pixel, static membership ---
+    if years is None:
+        treated_pts = pixelate(treated, res_m, grid).assign(**{treated_col_name: 1})
+        control_pts = pixelate(candidates, res_m, grid).assign(**{treated_col_name: 0})
+        return pd.concat([treated_pts, control_pts], ignore_index=True)
 
-    return pixels
+    years = list(years)
+
+    # Pixelate the geometry once. Treated pixels carry their site's restoration
+    # year (and name) so the panel can decide, per calendar year, whether the site
+    # has been restored yet.
+    carry = [restoration_yr_col] + ([site_col] if site_col in treated.columns else [])
+    treated_pts = pixelate(treated, res_m, grid, carry=carry)
+    # A pixel inside two overlapping sites appears once per site -> keep its
+    # earliest restoration year (the year it first became treated).
+    treated_pts = (
+        treated_pts.sort_values(restoration_yr_col)
+        .drop_duplicates(subset=["x", "y"], keep="first")
+        .reset_index(drop=True)
+        .rename(columns={restoration_yr_col: "restoration_year"})
+    )
+    control_pts = pixelate(candidates, res_m, grid)
+
+    # Broadcast both pixel sets across the calendar years.
+    treated_panel = _stack_across_years(treated_pts, years)
+    control_panel = _stack_across_years(control_pts, years)
+
+    # Per-year event time and treatment status for restoration-site pixels.
+    treated_panel["restoration_year"] = treated_panel["restoration_year"].astype("float64")
+    treated_panel["years_after_treatment"] = (
+        treated_panel["year"] - treated_panel["restoration_year"]
+    )
+    treated_panel[treated_col_name] = (
+        treated_panel["years_after_treatment"] >= 0
+    ).astype(int)
+    if drop_pretreatment:
+        treated_panel = treated_panel[treated_panel[treated_col_name] == 1].reset_index(
+            drop=True
+        )
+
+    # Candidate pool: control in every year, no restoration timing.
+    control_panel[treated_col_name] = 0
+    control_panel["restoration_year"] = np.nan
+    control_panel["years_after_treatment"] = np.nan
+
+    pixels = pd.concat([treated_panel, control_panel], ignore_index=True)
+    return gpd.GeoDataFrame(pixels, geometry="geometry", crs=grid.rio.crs)
 
 def attach_covariates(
     points: gpd.GeoDataFrame,
     names: Optional[Sequence[str]] = None,
     aoi: Optional[gpd.GeoDataFrame] = None,
-    res_m: float = DEFAULT_RES_M
+    res_m: float = DEFAULT_RES_M,
+    year_col: str = "year",
 ) -> gpd.GeoDataFrame:
     """Stage 4. Add one column per covariate, sampled at each pixel.
 
     Figure out: how to read a raster value at a point; which covariates are
     continuous vs categorical (don't average land cover); your rule for pixels
     that are NaN in a covariate.
+
+    The covariates registered today are *static* -- they depend only on where a
+    pixel is ``(x, y)``, not on the calendar year. So when ``points`` is a
+    pixel-year panel (the same ``(x, y)`` repeated across many ``year_col`` values,
+    as produced by :func:`get_treated_and_control_pixels` with ``years``), we
+    sample each layer once on the *unique* pixels and broadcast the value back
+    across that pixel's years, instead of resampling the same raster once per
+    pixel-year. The result is identical, just built without the redundant reads.
+
+    Per-year (temporal) covariates -- climate such as PRISM/Daymet -- are keyed on
+    ``(x, y, year)`` and are a documented TODO below: when those layers land they
+    are sampled here using ``points[year_col]`` and joined on the year too.
 
     Contract (verified by :func:`check_covariates`)
         Returns ``points`` with one added column per requested covariate; no
@@ -190,18 +317,30 @@ def attach_covariates(
         names = available_covariates()
     if aoi is None:
         aoi = points
-    
+
     grid = build_common_grid(aoi, res_m, ANALYSIS_CRS)
 
-    points = points.copy() # don't mutate the caller's gdf in place
-    xi = xr.DataArray(points['x'].values, dims='point')
-    yi = xr.DataArray(points['y'].values, dims='point')
+    points = points.copy()  # don't mutate the caller's gdf in place
+
+    # Static covariates vary only in space -> sample once per distinct pixel.
+    unique_px = points[["x", "y"]].drop_duplicates().reset_index(drop=True)
+    xi = xr.DataArray(unique_px["x"].values, dims="point")
+    yi = xr.DataArray(unique_px["y"].values, dims="point")
 
     for name in names:
         cov = covariate_on_grid(name, grid, aoi)
-        if cov is None: # not downloaded yet, skip
+        if cov is None:  # not downloaded yet, skip
             continue
-        points[name] = cov.sel(x=xi, y=yi, method='nearest').values
+        unique_px[name] = cov.sel(x=xi, y=yi, method="nearest").values
+
+    # Broadcast the per-pixel values back onto every (pixel, year) row. For a
+    # time-flat input this merge is a no-op join of each pixel onto itself.
+    sampled = [c for c in unique_px.columns if c not in ("x", "y")]
+    points = points.merge(unique_px[["x", "y", *sampled]], on=["x", "y"], how="left")
+
+    # TODO(temporal covariates): per-year climate layers (PRISM/Daymet) are keyed
+    # on (x, y, year); when downloaded, sample them per `year_col` and merge on
+    # ["x", "y", year_col] here so each pixel-year gets that year's weather.
 
     return points
 
