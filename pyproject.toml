@@ -11,6 +11,15 @@ dependencies = [
     "pandas",
 ]
 
+[project.optional-dependencies]
+# Readers for the R serialisations (.Rds/.RData) the climate pipeline ingests.
+# pyreadr (librdata) is fast but cannot parse the project's sf geometry
+# list-columns / ALTREP vectors; rdata is the pure-Python fallback that can.
+rdata = [
+    "pyreadr",
+    "rdata",
+]
+
 # Conventional "src layout": the importable package is `peatfire`, which lives
 # in src/peatfire/. setuptools discovers it under src/ and exposes it as
 # `import peatfire` (the src/ directory itself is not importable).
