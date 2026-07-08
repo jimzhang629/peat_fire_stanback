@@ -78,6 +78,10 @@ nc.prcp <- as.data.frame(do.call(bind_rows, nc.climate$tabular))$PRCP %>%
   ## Match station to geometry
   left_join(nc.climate$spatial %>% rename(STATION = ID))
 
+# save above dataframes
+saveRDS(nc.max,  "data/interim/climate/ghcn/nc_tmax_long.Rds")
+saveRDS(c.min,  "data/interim/climate/ghcn/nc_tmin_long.Rds")
+saveRDS(nc.prcp, "data/interim/climate/ghcn/nc_prcp_long.Rds")
 
 ################################################################################
 ################################################################################
@@ -229,7 +233,7 @@ nc.soil <- get_ssurgo_fixed(
 nc.lc <- get_nlcd(
   template = nc,
   label = "nc_landcover",
-  year = 2019,
+  year = 2020,
   dataset = "landcover",
   extraction.dir = "data/interim/land_cover/nlcd",
   force.redo = FALSE
