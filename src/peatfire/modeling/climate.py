@@ -50,6 +50,9 @@ from ..preproc.data_loading import data_path, read_vector_resilient
 # Common longitude / latitude column spellings to auto-detect in an export.
 _LON_CANDIDATES = ("longitude", "lon", "long", "x", "LONGITUDE", "LON")
 _LAT_CANDIDATES = ("latitude", "lat", "y", "LATITUDE", "LAT")
+# Common geometry column names in an `sf` export (used as a fallback when there
+# are no plain lon/lat columns -- see _extract_point_coords).
+_GEOM_CANDIDATES = ("geometry", "geom", "the_geom", "SHAPE", "geometry.x")
 
 # GHCN daily uses -9999 as its missing sentinel; guard against it leaking into
 # means even after the R export (which usually, but not always, drops it).
@@ -161,11 +164,62 @@ def _find_col(df: pd.DataFrame, explicit: str, candidates: tuple) -> Optional[st
     """Return ``explicit`` if present, else the first case-insensitive candidate."""
     if explicit in df.columns:
         return explicit
-    lower = {c.lower(): c for c in df.columns}
+    lower = {str(c).lower(): c for c in df.columns}
     for cand in candidates:
         if cand.lower() in lower:
             return lower[cand.lower()]
     return None
+
+
+def _extract_point_coords(col: pd.Series) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Recover ``(lon, lat)`` arrays from an ``sf``/``sfc`` geometry column.
+
+    The project's ``nc_*_long.Rds`` files are ``sf`` objects, so an export that
+    kept no separate lon/lat columns still carries the station location in its
+    geometry list-column. The pure-Python ``rdata`` reader does not know the
+    ``sfg`` class, so each ``POINT`` comes back as its underlying numeric pair
+    (an ``[lon, lat]`` array) rather than a shapely object -- exactly the values
+    we need. This also handles the friendlier shapes a different export might
+    produce: already-parsed shapely geometries or ``"POINT (lon lat)"`` WKT
+    strings.
+
+    Returns ``None`` when the column is empty or holds nothing coordinate-like,
+    so the caller can fall back to its "no location found" error.
+    """
+    from shapely.geometry.base import BaseGeometry
+
+    values = col.to_numpy()
+    sample = next(
+        (v for v in values if v is not None and not (np.isscalar(v) and pd.isna(v))),
+        None,
+    )
+    if sample is None:
+        return None
+
+    # 1) already-parsed shapely geometries (e.g. a real GeometryDtype column).
+    if isinstance(sample, BaseGeometry):
+        gs = gpd.GeoSeries(values)
+        return gs.x.to_numpy(dtype="float64"), gs.y.to_numpy(dtype="float64")
+
+    # 2) WKT text, e.g. "POINT (-76.5 35.1)".
+    if isinstance(sample, str):
+        from shapely import wkt
+
+        try:
+            gs = gpd.GeoSeries([wkt.loads(v) for v in values])
+        except Exception:  # noqa: BLE001 -- not WKT; give the caller its error
+            return None
+        return gs.x.to_numpy(dtype="float64"), gs.y.to_numpy(dtype="float64")
+
+    # 3) raw coordinate pairs from an `sfc` list-column: each element is an
+    #    [lon, lat] array/list/tuple (sf stores POINTs as c(X, Y) = c(lon, lat)).
+    try:
+        arr = np.array([np.asarray(v, dtype="float64").ravel() for v in values])
+    except (TypeError, ValueError):
+        return None
+    if arr.ndim != 2 or arr.shape[1] < 2:
+        return None
+    return arr[:, 0], arr[:, 1]
 
 
 def load_ghcn_stations(
@@ -193,7 +247,9 @@ def load_ghcn_stations(
     lon_col, lat_col : str
         Longitude / latitude columns for the tabular path. If the exact names are
         absent, common spellings (``LONGITUDE``/``lon``/... , ``LATITUDE``/...)
-        are tried before erroring.
+        are tried; failing that, a geometry list-column (an ``sf``/``sfc`` export,
+        as the project's ``nc_*_long.Rds`` files are) is used to recover lon/lat
+        before erroring.
     station_col : str
         Per-station identifier, carried through so records collapse to one normal
         per station.
@@ -215,19 +271,37 @@ def load_ghcn_stations(
             gdf = gdf.set_crs(source_crs)
     else:
         df = _read_records(path)
+        # R exports label columns with numpy str scalars (np.str_); normalise to
+        # plain str so column names print cleanly and match reliably downstream.
+        df.columns = [str(c) for c in df.columns]
         lon = _find_col(df, lon_col, _LON_CANDIDATES)
         lat = _find_col(df, lat_col, _LAT_CANDIDATES)
-        if lon is None or lat is None:
-            raise ValueError(
-                f"{path.name}: could not find longitude/latitude columns "
-                f"(looked for {lon_col!r}/{lat_col!r} and common spellings). "
-                f"Columns present: {list(df.columns)}. If the export is an `sf` "
-                "object without plain lon/lat, add LONGITUDE/LATITUDE columns in R "
-                "before saving (e.g. cbind(sf::st_coordinates(...)))."
+        if lon is not None and lat is not None:
+            geometry = gpd.points_from_xy(df[lon].to_numpy(), df[lat].to_numpy())
+        else:
+            # No plain lon/lat: fall back to the geometry list-column an `sf`
+            # export carries (the project's nc_*_long.Rds are sf objects).
+            geom_col = _find_col(df, "geometry", _GEOM_CANDIDATES)
+            coords = (
+                _extract_point_coords(df[geom_col]) if geom_col is not None else None
             )
-        gdf = gpd.GeoDataFrame(
-            df, geometry=gpd.points_from_xy(df[lon], df[lat]), crs=source_crs
-        )
+            if coords is None:
+                raise ValueError(
+                    f"{path.name}: could not find longitude/latitude columns "
+                    f"(looked for {lon_col!r}/{lat_col!r} and common spellings) "
+                    f"or a usable geometry column. Columns present: "
+                    f"{list(df.columns)}. If the export is an `sf` object without "
+                    "plain lon/lat, add LONGITUDE/LATITUDE columns in R before "
+                    "saving (e.g. cbind(sf::st_coordinates(...)))."
+                )
+            geometry = gpd.points_from_xy(*coords)
+        # Drop any raw geometry list-column so it can't collide with the active
+        # geometry set below (the tabular readers never yield a real GeometryDtype).
+        geom_names = {c.lower() for c in _GEOM_CANDIDATES}
+        stale = [c for c in df.columns if str(c).lower() in geom_names]
+        if stale:
+            df = df.drop(columns=stale)
+        gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=source_crs)
 
     if station_col not in gdf.columns:
         # Fall back to a per-geometry id so the collapse step still works.
