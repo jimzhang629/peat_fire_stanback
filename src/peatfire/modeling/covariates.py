@@ -23,7 +23,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
@@ -214,9 +214,53 @@ COVARIATES: dict[str, CovariateSpec] = {
         native_res_m=30.0,
         source="SEUS Forest Mgmt Map (Fibreboard/Nature sdata2018165).",
     ),
-    # NOTE: distance-to-coast is *derived* (from the NC boundary / coastline),
-    # and climate (PRISM/Daymet) is *temporal* (per-year); both are handled in
-    # frame.py rather than as static raster specs here.
+    # NOTE: distance-to-coast is *derived* (from the NC boundary / coastline).
+    # Per-year climate (year-specific weather) is *temporal* and lives in the
+    # separate TEMPORAL_COVARIATES registry below, keyed on (x, y, year).
+}
+
+
+# ---------------------------------------------------------------------------
+# Temporal (per-year) covariates
+#
+# Same idea as COVARIATES, but the file depends on the calendar year: the spec's
+# ``glob`` is a *template* containing ``{year}`` (e.g. ``precip_{year}_nc.tif``),
+# filled in per year before globbing. These are the year-specific weather layers
+# (built by modeling.climate.build_annual_climate) that belong in the outcome /
+# DiD stage -- a `treated:precip` dry-year interaction -- rather than in the
+# geographic match, which keys off the *static* climate normals in COVARIATES.
+# Reusing CovariateSpec keeps "one spec per covariate": a static glob has no
+# ``{year}`` so ``.format(year=...)`` is a harmless no-op, and a temporal glob is
+# resolved to a concrete filename by the temporal loaders below.
+# ---------------------------------------------------------------------------
+TEMPORAL_COVARIATES: dict[str, CovariateSpec] = {
+    "precip": CovariateSpec(
+        name="precip",
+        role="continuous",
+        # /data/processed/climate/annual/precip_<year>_nc.tif  (annual PRCP total, mm)
+        root_parts=("processed", "climate", "annual"),
+        glob="precip_{year}_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily PRCP annual total, IDW-interpolated (modeling.climate).",
+    ),
+    "tmax": CovariateSpec(
+        name="tmax",
+        role="continuous",
+        # /data/processed/climate/annual/tmax_<year>_nc.tif  (mean daily TMAX, deg C)
+        root_parts=("processed", "climate", "annual"),
+        glob="tmax_{year}_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily TMAX annual mean, IDW-interpolated (modeling.climate).",
+    ),
+    "tmin": CovariateSpec(
+        name="tmin",
+        role="continuous",
+        # /data/processed/climate/annual/tmin_<year>_nc.tif  (mean daily TMIN, deg C)
+        root_parts=("processed", "climate", "annual"),
+        glob="tmin_{year}_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily TMIN annual mean, IDW-interpolated (modeling.climate).",
+    ),
 }
 
 
@@ -239,6 +283,22 @@ def list_covariates(role: Optional[str] = None) -> list[str]:
     ]
 
 
+def get_temporal_covariate(name: str) -> CovariateSpec:
+    """Return the per-year :class:`CovariateSpec` for ``name`` (clear error if unknown)."""
+    try:
+        return TEMPORAL_COVARIATES[name]
+    except KeyError:
+        raise KeyError(
+            f"Unknown temporal covariate {name!r}. "
+            f"Registered: {sorted(TEMPORAL_COVARIATES)}"
+        )
+
+
+def list_temporal_covariates() -> list[str]:
+    """List registered per-year (temporal) covariate names."""
+    return list(TEMPORAL_COVARIATES)
+
+
 def available_covariates() -> list[str]:
     """Names whose file is actually present on disk right now.
 
@@ -246,6 +306,28 @@ def available_covariates() -> list[str]:
     caller having to know which downloads have landed.
     """
     return [name for name, spec in COVARIATES.items() if _covariate_file(spec)]
+
+
+def available_temporal_covariates(years: Sequence[int]) -> list[str]:
+    """Per-year covariate names that have a raster for **every** year in ``years``.
+
+    The counterpart to :func:`available_covariates` for the temporal registry, so
+    the frame builder / matcher can default to "every per-year layer we have for
+    this panel" without the caller tracking which years have been built. Requiring
+    all requested years present avoids silently attaching a half-built layer (which
+    would null the missing pixel-years); request a name explicitly to attach a
+    partially-built layer, where missing years fall back to NaN.
+    """
+    years = list(years)
+    out = []
+    for name, spec in TEMPORAL_COVARIATES.items():
+        if not spec.directory.exists():
+            continue
+        if all(
+            sorted(spec.directory.glob(spec.glob.format(year=year))) for year in years
+        ):
+            out.append(name)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +352,48 @@ def _covariate_file(spec: CovariateSpec) -> Optional[Path]:
     return files[0]
 
 
+def _temporal_covariate_file(spec: CovariateSpec, year: int) -> Optional[Path]:
+    """First file matching the spec's per-year glob for ``year`` (or ``None``).
+
+    Fills the ``{year}`` template in ``spec.glob`` before globbing, so one spec
+    covers every year on disk. Warns and returns ``None`` when the directory or a
+    given year's file is absent -- so a not-yet-built year skips gracefully, the
+    same way :func:`_covariate_file` handles a not-yet-downloaded static layer.
+    """
+    if not spec.directory.exists():
+        warnings.warn(
+            f"{spec.name}: directory {spec.directory} does not exist -- skipping.",
+            stacklevel=2,
+        )
+        return None
+    glob = spec.glob.format(year=year)
+    files = sorted(spec.directory.glob(glob))
+    if not files:
+        warnings.warn(
+            f"{spec.name}: no file matches {glob} in {spec.directory} -- skipping.",
+            stacklevel=2,
+        )
+        return None
+    return files[0]
+
+
+def _standardize(da: xr.DataArray, spec: CovariateSpec, name: str) -> xr.DataArray:
+    """Squeeze to ``(y, x)``, select ``band``, null ``nodata``, apply ``transform``.
+
+    The shared read-standardization step for both static and per-year covariates.
+    """
+    if spec.band is not None:
+        da = da.sel(band=spec.band, drop=True)
+    elif "band" in da.dims:
+        da = da.squeeze("band", drop=True)
+    if spec.nodata is not None:
+        da = da.where(~da.isin(list(spec.nodata)))
+    if spec.transform is not None:
+        da = spec.transform(da)
+    da.name = name
+    return da
+
+
 def load_covariate(name: str, aoi) -> Optional[xr.DataArray]:
     """Clipped, standardized 2-D DataArray for one covariate (or ``None``).
 
@@ -281,18 +405,22 @@ def load_covariate(name: str, aoi) -> Optional[xr.DataArray]:
     path = _covariate_file(spec)
     if path is None:
         return None
+    return _standardize(clip_raster_to_mask(path, aoi), spec, name)
 
-    da = clip_raster_to_mask(path, aoi)
-    if spec.band is not None:
-        da = da.sel(band=spec.band, drop=True)
-    elif "band" in da.dims:
-        da = da.squeeze("band", drop=True)
-    if spec.nodata is not None:
-        da = da.where(~da.isin(list(spec.nodata)))
-    if spec.transform is not None:
-        da = spec.transform(da)
-    da.name = name
-    return da
+
+def load_temporal_covariate(name: str, aoi, year: int) -> Optional[xr.DataArray]:
+    """Clipped, standardized 2-D DataArray for one per-year covariate (or ``None``).
+
+    The temporal counterpart of :func:`load_covariate`: resolves the spec's
+    ``{year}`` glob to that calendar year's raster, then applies the identical
+    clip + standardization. Returns ``None`` (with a warning) if that year is not
+    on disk.
+    """
+    spec = get_temporal_covariate(name)
+    path = _temporal_covariate_file(spec, year)
+    if path is None:
+        return None
+    return _standardize(clip_raster_to_mask(path, aoi), spec, name)
 
 
 def covariate_on_grid(name: str, grid: xr.DataArray, aoi) -> Optional[xr.DataArray]:
@@ -308,4 +436,20 @@ def covariate_on_grid(name: str, grid: xr.DataArray, aoi) -> Optional[xr.DataArr
     if da is None:
         return None
     spec = get_covariate(name)
+    return to_common_grid(da.astype("float32"), grid, how=spec.how)
+
+
+def temporal_covariate_on_grid(
+    name: str, grid: xr.DataArray, aoi, year: int
+) -> Optional[xr.DataArray]:
+    """Load one per-year covariate for ``year`` and warp it onto ``grid``.
+
+    The temporal counterpart of :func:`covariate_on_grid`: same grid-aggregation
+    contract, but for the calendar year's weather raster. Returns ``None`` if that
+    year's layer is not on disk, so callers sampling a panel can skip missing years.
+    """
+    da = load_temporal_covariate(name, aoi, year)
+    if da is None:
+        return None
+    spec = get_temporal_covariate(name)
     return to_common_grid(da.astype("float32"), grid, how=spec.how)

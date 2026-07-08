@@ -62,6 +62,12 @@ GHCN_MISSING = -9999.0
 # ``("processed", "climate")`` root the covariate specs read from.
 CLIMATE_DIR_PARTS = ("processed", "climate")
 
+# Where build_annual_climate writes its per-year rasters. A subdirectory of the
+# climate root so the year-specific weather (precip_2020_nc.tif, ...) never
+# collides with the normals (precip_normal_nc.tif) and matches the
+# ``("processed", "climate", "annual")`` root the temporal covariate specs read.
+ANNUAL_CLIMATE_DIR_PARTS = ("processed", "climate", "annual")
+
 
 # ---------------------------------------------------------------------------
 # 1. Load station points
@@ -529,6 +535,124 @@ def build_climate_normals(
         da.name = name
         out[name] = da
     return out
+
+
+# Per-year (temporal) counterparts of DEFAULT_CLIMATE_ELEMENTS. Same value
+# columns and daily->annual reductions (precip total, mean tmax/tmin), but named
+# for the temporal covariates they build (precip / tmax / tmin, registered in
+# covariates.TEMPORAL_COVARIATES) rather than the *_normal static covariates.
+DEFAULT_ANNUAL_ELEMENTS: dict[str, dict] = {
+    "precip": {"value_col": "PRCP", "annual_reduce": "sum"},
+    "tmax": {"value_col": "TMAX", "annual_reduce": "mean"},
+    "tmin": {"value_col": "TMIN", "annual_reduce": "mean"},
+}
+
+
+def build_annual_climate(
+    records_by_element: Mapping[str, gpd.GeoDataFrame],
+    aoi: gpd.GeoDataFrame,
+    years: Iterable[int],
+    elements: Optional[Mapping[str, dict]] = None,
+    res_m: float = 300.0,
+    station_col: str = "STATION",
+    year_col: Optional[str] = "YEAR",
+    power: float = 2.0,
+    k: int = 8,
+) -> dict[str, dict[int, xr.DataArray]]:
+    """Build one interpolated climate grid per element **per calendar year**.
+
+    The temporal counterpart of :func:`build_climate_normals`. It reuses exactly
+    the same station -> annual-value -> IDW machinery, but instead of averaging the
+    annual values across years into one *normal*, it interpolates each single
+    year's annual value onto the grid -- the year-specific weather the outcome /
+    DiD stage needs (e.g. a ``treated:precip`` dry-year interaction), as opposed to
+    the stable normals the geographic match keys off.
+
+    Each year is produced by reducing that station's daily records within the year
+    (``annual_reduce`` -- sum for precip, mean for a temperature level), i.e.
+    :func:`station_normals` restricted to a single-year ``baseline=(year, year)``,
+    then IDW-interpolated onto one common grid over ``aoi`` (shared across years so
+    every layer aligns cell-for-cell with the normals and the fire response).
+
+    Parameters
+    ----------
+    records_by_element : mapping ``element_name -> station records``
+        For each element (``"precip"``/``"tmax"``/``"tmin"`` by default), the
+        loaded GHCN records (from :func:`load_ghcn_stations`) carrying that
+        element's value column and a ``year_col``. The same records used for the
+        normals can be reused here.
+    years : iterable of int
+        Calendar years to build a grid for (e.g. ``range(2019, 2025)``). A year
+        with no station records for an element is skipped (with a warning).
+    elements : mapping, optional
+        ``element_name -> {"value_col", "annual_reduce"}`` recipe. Defaults to
+        :data:`DEFAULT_ANNUAL_ELEMENTS`.
+
+    Returns
+    -------
+    dict ``element_name -> {year -> DataArray}`` on the shared grid.
+    """
+    import warnings
+
+    elements = elements or DEFAULT_ANNUAL_ELEMENTS
+    years = list(years)
+    grid = build_common_grid(aoi, res_m=res_m)
+
+    out: dict[str, dict[int, xr.DataArray]] = {}
+    for name, recipe in elements.items():
+        records = records_by_element.get(name)
+        if records is None:
+            continue
+        per_year: dict[int, xr.DataArray] = {}
+        for year in years:
+            try:
+                stn = station_normals(
+                    records,
+                    value_col=recipe["value_col"],
+                    station_col=station_col,
+                    year_col=year_col,
+                    baseline=(year, year),  # single-year window -> that year's value
+                    annual_reduce=recipe.get("annual_reduce", "mean"),
+                )
+            except ValueError:
+                # No records for this element/year after filtering -> skip the year.
+                warnings.warn(
+                    f"{name}: no records for {year} -- skipping that year.",
+                    stacklevel=2,
+                )
+                continue
+            da = idw_to_grid(stn, recipe["value_col"], grid, power=power, k=k)
+            da.name = f"{name}_{year}"
+            per_year[year] = da
+        out[name] = per_year
+    return out
+
+
+def write_annual_climate(
+    annual: Mapping[str, Mapping[int, xr.DataArray]],
+    out_dir: Optional[Path] = None,
+) -> dict[tuple[str, int], Path]:
+    """Save per-year grids as ``<element>_<year>_nc.tif`` under ``processed/climate/annual/``.
+
+    The filenames match the ``{year}`` globs registered in
+    :data:`peatfire.modeling.covariates.TEMPORAL_COVARIATES`
+    (``precip_{year}_nc.tif`` etc.), so once written they attach as temporal
+    covariates automatically -- the temporal analogue of
+    :func:`write_climate_normals`.
+
+    Returns a mapping ``(element_name, year) -> written path``.
+    """
+    out_dir = (
+        Path(out_dir) if out_dir is not None else data_path(*ANNUAL_CLIMATE_DIR_PARTS)
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[tuple[str, int], Path] = {}
+    for name, per_year in annual.items():
+        for year, da in per_year.items():
+            path = out_dir / f"{name}_{year}_nc.tif"
+            da.rio.to_raster(path)
+            written[(name, int(year))] = path
+    return written
 
 
 def write_climate_normals(
