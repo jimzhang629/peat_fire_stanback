@@ -63,13 +63,86 @@ CLIMATE_DIR_PARTS = ("processed", "climate")
 # ---------------------------------------------------------------------------
 # 1. Load station points
 # ---------------------------------------------------------------------------
+def _read_r_serialisation(path: Path) -> pd.DataFrame:
+    """Read an ``.Rds``/``.RData`` GHCN export into a DataFrame.
+
+    Two readers, tried in order, because the project's exports break the fast one:
+
+    * ``pyreadr`` (a C ``librdata`` wrapper) is quick and returns clean dtypes,
+      but ``librdata`` only understands *plain* data frames of atomic columns. The
+      ``nc_*_long.Rds`` files are ``dplyr`` joins against ``nc.climate$spatial``
+      (an ``sf`` object), so they carry a **geometry list-column** -- and modern R
+      also stores integer/real sequences as compact ALTREP vectors. ``librdata``
+      supports neither, and raises ``LibrdataError: Invalid file, or file has
+      unsupported features`` (or a ``PyreadrError``) on exactly these files.
+    * ``rdata`` is a pure-Python reader that *does* handle ALTREP vectors, nested
+      lists, and list-columns. Unknown R classes (an ``sf`` ``sfc`` geometry
+      column, a ``Date``, ...) come back as their underlying values with a warning
+      rather than aborting the read, so the atomic lon/lat/value columns the rest
+      of this module needs survive intact.
+
+    So we let ``pyreadr`` handle the simple case and fall back to ``rdata`` for the
+    ``sf``/ALTREP files, only requiring ``rdata`` be installed when it is actually
+    needed.
+    """
+    try:
+        import pyreadr  # optional dep; the fast path for plain data frames
+    except ImportError:
+        pyreadr = None
+
+    if pyreadr is not None:
+        try:
+            result = pyreadr.read_r(str(path))
+            # An .Rds holds one unnamed object (key None); .RData may hold several.
+            key = None if None in result else next(iter(result))
+            return pd.DataFrame(result[key])
+        except Exception as exc:  # noqa: BLE001 -- librdata surfaces several types
+            # librdata can't parse this one (geometry list-column / ALTREP). Fall
+            # through to the pure-Python reader rather than failing outright.
+            pyreadr_error = exc
+    else:
+        pyreadr_error = None
+
+    try:
+        import rdata  # pure-Python R reader; handles what librdata cannot
+    except ImportError as exc:
+        hint = (
+            f"{path.name}: could not be read by pyreadr/librdata "
+            f"({pyreadr_error}). " if pyreadr_error is not None
+            else f"{path.name}: reading R serialisations needs a reader. "
+        )
+        raise ImportError(
+            hint + "This export uses features librdata does not support (an sf "
+            "geometry list-column and/or ALTREP vectors); install the pure-Python "
+            "fallback with `pip install rdata` to read it."
+        ) from exc
+
+    # Unknown R classes (sf `sfc`, Date, ...) warn and return raw values; that is
+    # fine here -- we only need the atomic columns -- so keep the warnings quiet.
+    import warnings
+
+    suffix = path.suffix.lower()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if suffix == ".rds":
+            obj = rdata.read_rds(str(path))
+        else:  # .rdata / .rda hold a name -> object mapping
+            objects = rdata.read_rda(str(path))
+            # Mirror pyreadr's "first object" behaviour, preferring a real frame.
+            obj = next(
+                (v for v in objects.values() if isinstance(v, pd.DataFrame)),
+                next(iter(objects.values())),
+            )
+    return obj if isinstance(obj, pd.DataFrame) else pd.DataFrame(obj)
+
+
 def _read_records(path: Path) -> pd.DataFrame:
     """Read a GHCN export into a plain DataFrame, format inferred from suffix.
 
     Supports the R serialisations the project actually produces (``.Rds`` via
-    ``pyreadr``) alongside the portable tabular formats, so the ``nc_prcp_long``
-    / ``nc_tmax_long`` / ``nc_tmin_long`` ``.Rds`` files can be read without a
-    round-trip through R.
+    ``pyreadr`` with an ``rdata`` fallback) alongside the portable tabular formats,
+    so the ``nc_prcp_long`` / ``nc_tmax_long`` / ``nc_tmin_long`` ``.Rds`` files
+    can be read without a round-trip through R.
     """
     suffix = path.suffix.lower()
     if suffix in {".csv", ".txt"}:
@@ -77,15 +150,10 @@ def _read_records(path: Path) -> pd.DataFrame:
     if suffix in {".parquet", ".pq"}:
         return pd.read_parquet(path)
     if suffix in {".rds", ".rdata", ".rda"}:
-        import pyreadr  # optional dep; only needed for the R serialisations
-
-        result = pyreadr.read_r(str(path))
-        # An .Rds holds one unnamed object (key None); .RData may hold several.
-        key = None if None in result else next(iter(result))
-        return pd.DataFrame(result[key])
+        return _read_r_serialisation(path)
     raise ValueError(
-        f"{path.name}: unsupported climate export {suffix!r}. Use .Rds (pyreadr), "
-        ".csv, .parquet, or a spatial file (.gpkg/.geojson/.shp)."
+        f"{path.name}: unsupported climate export {suffix!r}. Use .Rds "
+        "(pyreadr/rdata), .csv, .parquet, or a spatial file (.gpkg/.geojson/.shp)."
     )
 
 
