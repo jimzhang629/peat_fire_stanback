@@ -50,6 +50,7 @@ try:  # optional geospatial API
         product_pair_scatter,
         rmse,
         stack_on_common_grid,
+        to_common_grid,
         total_least_squares,
         rasterize_polygons_to_grid
     )
@@ -93,6 +94,7 @@ try:  # optional geospatial API
         "product_pair_scatter",
         "rmse",
         "stack_on_common_grid",
+        "to_common_grid",
         "total_least_squares",
         "rasterize_polygons_to_grid",
         "REFERENCE_SOURCES",

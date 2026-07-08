@@ -34,14 +34,10 @@ from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_commo
 from .covariates import available_covariates, covariate_on_grid  # noqa: F401
 from .frame import DEFAULT_RES_M  # noqa: F401
 
+from sklearn.neighbors import NearestNeighbors
 # A pixel this close to a restoration site may be partially rewetted by it
 # (spillover) -- exclude it from the control pool. Tune per Stage 2.
 DEFAULT_SPILLOVER_M = 1000.0
-
-
-# ===========================================================================
-# PART A -- functions you implement (one per assignment stage)
-# ===========================================================================
 
 # hm this is unnecessary i think - load_completed_restoration_sites_in_analysis_crs does this already
 def load_treated_units(path: Optional[Path] = None) -> gpd.GeoDataFrame:
@@ -366,7 +362,76 @@ def match_controls(
         ``site_id`` is the matched stratum (pair) and control rows carry their
         distance to the treated partner (<= ``caliper``).
     """
+    df = pixels.copy()
 
+    # --- 1. Define the treated GROUP (not the per-year flag) --------------
+    # If this is a year panel, `treated_col` flips per year and each pixel
+    # repeats. Matching is on static covariates, so collapse to unique pixels
+    # and label the group by restoration-site membership.
+    if "restoration_year" in df.columns:
+        is_treated = df["restoration_year"].notna()
+        # one row per physical pixel for the matching step
+        cross = df.drop_duplicates(subset=["x", "y"]).copy()
+        cross["_grp_treated"] = cross["restoration_year"].notna().astype(int)
+    else:
+        cross = df.copy()
+        cross["_grp_treated"] = cross[treated_col].astype(int)
+
+    # --- 2. Build the covariate matrix, drop rows NaN in any covariate ----
+    cont = list(continuous)
+    cross = cross.dropna(subset=cont).reset_index(drop=True)
+    X = cross[cont].to_numpy(dtype=float)
+
+    # --- 3. Whiten so plain Euclidean == Mahalanobis ---------------------
+    # cov of the pooled covariates; W = cov^{-1/2}; Xw = (X - mean) @ W
+    # TODO(you): compute mean, covariance, and the inverse-sqrt (hint:
+    #   np.linalg.eigh on the covariance, or scipy.linalg.sqrtm of the inverse).
+    #   Guard against a singular covariance (add a tiny ridge to the diagonal).
+    Xw = ...  # whitened, shape (n_pixels, n_cont)
+    cross_w = cross.assign(**{f"_z{i}": Xw[:, i] for i in range(Xw.shape[1])})
+    zcols = [f"_z{i}" for i in range(Xw.shape[1])]
+
+    # --- 4. Exact-match on categoricals: match WITHIN each class ----------
+    # Group so a treated pixel only sees controls of the same land cover.
+    group_keys = list(categorical) if categorical else None
+    groups = cross_w.groupby(group_keys) if group_keys else [((), cross_w)]
+
+    pairs = []  # collect matched (treated_row, control_row, distance)
+    n_dropped = 0
+    for _, g in groups:
+        t = g[g["_grp_treated"] == 1]
+        c = g[g["_grp_treated"] == 0]
+        if len(t) == 0 or len(c) == 0:
+            n_dropped += len(t)   # treated with no same-class controls
+            continue
+
+        nn = NearestNeighbors(n_neighbors=min(k, len(c)))
+        nn.fit(c[zcols].to_numpy())
+        dist, idx = nn.kneighbors(t[zcols].to_numpy())  # (n_t, k) each
+
+        # --- 5. caliper + assemble pairs ---------------------------------
+        # TODO(you): for each treated row i and its k neighbours:
+        #   - keep only neighbours with dist <= caliper (drop the treated
+        #     pixel entirely if none qualify -> increment n_dropped)
+        #   - decide replacement: with -> reuse controls freely; without ->
+        #     don't let a control index be claimed twice (track used idx)
+        #   - record: treated row, matched control row(s), the distance,
+        #     and a shared site_id for this stratum/pair
+        ...
+
+    # --- 6. Assemble output the checker wants ----------------------------
+    # Columns required by check_matches: unit_id, site_id, treated_col,
+    # match_distance. Treated rows: distance 0 (or NaN); control rows: their
+    # distance to the treated partner. site_id = the pair/stratum id.
+    # TODO(you): turn `pairs` into rows, keep geometry, set the 4 columns.
+    matched = ...
+
+    print(f"[match] dropped {n_dropped} treated pixels with no control in caliper")
+
+    # --- 7. (optional) re-expand to the year panel -----------------------
+    # site_id / match_distance are time-invariant, so if you want the full
+    # panel back, merge these assignments onto `df` by ["x", "y"].
+    return matched
     
 
 def balance_table(
