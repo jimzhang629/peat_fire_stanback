@@ -45,7 +45,11 @@ import pandas as pd
 import xarray as xr
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
-from ..preproc.data_loading import data_path
+from ..preproc.data_loading import data_path, read_vector_resilient
+
+# Common longitude / latitude column spellings to auto-detect in an export.
+_LON_CANDIDATES = ("longitude", "lon", "long", "x", "LONGITUDE", "LON")
+_LAT_CANDIDATES = ("latitude", "lat", "y", "LATITUDE", "LAT")
 
 # GHCN daily uses -9999 as its missing sentinel; guard against it leaking into
 # means even after the R export (which usually, but not always, drops it).
@@ -59,6 +63,43 @@ CLIMATE_DIR_PARTS = ("processed", "climate")
 # ---------------------------------------------------------------------------
 # 1. Load station points
 # ---------------------------------------------------------------------------
+def _read_records(path: Path) -> pd.DataFrame:
+    """Read a GHCN export into a plain DataFrame, format inferred from suffix.
+
+    Supports the R serialisations the project actually produces (``.Rds`` via
+    ``pyreadr``) alongside the portable tabular formats, so the ``nc_prcp_long``
+    / ``nc_tmax_long`` / ``nc_tmin_long`` ``.Rds`` files can be read without a
+    round-trip through R.
+    """
+    suffix = path.suffix.lower()
+    if suffix in {".csv", ".txt"}:
+        return pd.read_csv(path)
+    if suffix in {".parquet", ".pq"}:
+        return pd.read_parquet(path)
+    if suffix in {".rds", ".rdata", ".rda"}:
+        import pyreadr  # optional dep; only needed for the R serialisations
+
+        result = pyreadr.read_r(str(path))
+        # An .Rds holds one unnamed object (key None); .RData may hold several.
+        key = None if None in result else next(iter(result))
+        return pd.DataFrame(result[key])
+    raise ValueError(
+        f"{path.name}: unsupported climate export {suffix!r}. Use .Rds (pyreadr), "
+        ".csv, .parquet, or a spatial file (.gpkg/.geojson/.shp)."
+    )
+
+
+def _find_col(df: pd.DataFrame, explicit: str, candidates: tuple) -> Optional[str]:
+    """Return ``explicit`` if present, else the first case-insensitive candidate."""
+    if explicit in df.columns:
+        return explicit
+    lower = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    return None
+
+
 def load_ghcn_stations(
     path,
     lon_col: str = "longitude",
@@ -69,21 +110,25 @@ def load_ghcn_stations(
     """Read exported GHCN records into a GeoDataFrame in the analysis CRS.
 
     Accepts whatever the R script's ``nc.prcp`` / ``nc.max`` / ``nc.min`` frames
-    are exported as -- a tidy CSV/parquet with one row per (station, day) and a
-    station longitude/latitude, or an already-spatial file (GeoPackage/GeoJSON/
-    shapefile). Everything downstream keys off ``station_col`` and the geometry,
-    so column names for the *values* (PRCP/TMAX/...) are chosen later.
+    are saved as: the project's ``.Rds`` (read via ``pyreadr``), a tidy CSV /
+    parquet with one row per (station, day) and a station longitude/latitude, or
+    an already-spatial file (GeoPackage/GeoJSON/shapefile). Everything downstream
+    keys off ``station_col`` and the geometry, so the *value* columns
+    (PRCP/TMAX/...) are chosen later.
 
     Parameters
     ----------
     path : str | Path
-        File to read. ``.csv``/``.txt`` -> pandas + point geometry from
-        ``lon_col``/``lat_col``; anything else -> :func:`geopandas.read_file`.
+        File to read. ``.Rds``/``.csv``/``.parquet`` -> table + point geometry
+        from ``lon_col``/``lat_col`` (spellings auto-detected); a spatial file ->
+        read directly (resiliently, to survive read-only GeoPackages).
     lon_col, lat_col : str
-        Longitude / latitude columns (only used for the tabular path).
+        Longitude / latitude columns for the tabular path. If the exact names are
+        absent, common spellings (``LONGITUDE``/``lon``/... , ``LATITUDE``/...)
+        are tried before erroring.
     station_col : str
-        Per-station identifier, carried through so records can be collapsed to
-        one normal per station.
+        Per-station identifier, carried through so records collapse to one normal
+        per station.
     source_crs : str
         CRS of the incoming lon/lat (GHCN is WGS84 / EPSG:4326).
 
@@ -94,23 +139,27 @@ def load_ghcn_stations(
         input record, with the value columns preserved.
     """
     path = Path(path)
-    if path.suffix.lower() in {".csv", ".txt"}:
-        df = pd.read_csv(path)
-        missing = [c for c in (lon_col, lat_col) if c not in df.columns]
-        if missing:
-            raise ValueError(
-                f"{path.name}: expected lon/lat columns {missing} not found; "
-                f"pass lon_col=/lat_col= (have {list(df.columns)})."
-            )
-        gdf = gpd.GeoDataFrame(
-            df,
-            geometry=gpd.points_from_xy(df[lon_col], df[lat_col]),
-            crs=source_crs,
-        )
-    else:
-        gdf = gpd.read_file(path)
+    spatial_suffixes = {".gpkg", ".geojson", ".json", ".shp"}
+
+    if path.suffix.lower() in spatial_suffixes:
+        gdf = read_vector_resilient(path)
         if gdf.crs is None:
             gdf = gdf.set_crs(source_crs)
+    else:
+        df = _read_records(path)
+        lon = _find_col(df, lon_col, _LON_CANDIDATES)
+        lat = _find_col(df, lat_col, _LAT_CANDIDATES)
+        if lon is None or lat is None:
+            raise ValueError(
+                f"{path.name}: could not find longitude/latitude columns "
+                f"(looked for {lon_col!r}/{lat_col!r} and common spellings). "
+                f"Columns present: {list(df.columns)}. If the export is an `sf` "
+                "object without plain lon/lat, add LONGITUDE/LATITUDE columns in R "
+                "before saving (e.g. cbind(sf::st_coordinates(...)))."
+            )
+        gdf = gpd.GeoDataFrame(
+            df, geometry=gpd.points_from_xy(df[lon], df[lat]), crs=source_crs
+        )
 
     if station_col not in gdf.columns:
         # Fall back to a per-geometry id so the collapse step still works.

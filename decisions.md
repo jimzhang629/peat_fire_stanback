@@ -55,7 +55,15 @@ log each methodological choice
   + inverse-distance weights) is chosen over kriging as the transparent,
   dependency-light interpolant that never extrapolates outside the station range,
   which is all a match-only covariate needs; swap in kriging later without
-  changing the covariate contract (a GeoTIFF on the grid).
+  changing the covariate contract (a GeoTIFF on the grid). Ingest formats match
+  what the R script actually writes: climate as GHCN `.Rds` long tables (read via
+  `pyreadr`, `modeling/climate.py`), and **soil as SSURGO polygons**
+  (`nc_soil_ssurgo.gpkg`) rasterised attribute-by-attribute onto the grid by
+  `modeling/soil.py` -- continuous properties burned as values, drainage class
+  factorised to codes and used as an **exact-match key** (matched within class),
+  not a continuous distance axis. GeoPackages are read through
+  `read_vector_resilient`, which copies to a writable temp on the SQLite
+  "readonly database" error some exports trigger.
 
 - **Step-by-step diagnostic plots (`modeling/plotting.py`).** Each pipeline stage
   gets an inspection figure sharing the fire-comparison style: covariate coverage

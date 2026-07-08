@@ -144,6 +144,15 @@ COVARIATES: dict[str, CovariateSpec] = {
         native_res_m=300.0,
         source="GHCN daily TMAX normal, IDW-interpolated (modeling.climate).",
     ),
+    "tmin_normal": CovariateSpec(
+        name="tmin_normal",
+        role="continuous",
+        # /data/processed/climate/tmin_normal_nc.tif  (mean annual TMIN, deg C)
+        root_parts=("processed", "climate"),
+        glob="tmin_normal_nc.tif",
+        native_res_m=300.0,
+        source="GHCN daily TMIN normal, IDW-interpolated (modeling.climate).",
+    ),
     # --- SSURGO soil properties (gridded rasters on disk) -----------------------
     # gSSURGO map-unit properties rasterised to 30 m. Continuous properties are
     # area-averaged onto the grid; drainage class is categorical (majority class).
