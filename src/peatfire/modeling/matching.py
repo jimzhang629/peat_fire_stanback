@@ -629,9 +629,18 @@ def assemble_units(matched: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     :func:`match_controls`); ``pair_id`` (the finer matched stratum) is carried
     through too when present, in case you want to cluster on the pair instead.
 
+    The covariate columns matching sampled and balanced on (elevation, histosol
+    %, ...) are **carried through unchanged**. This matters: ``matched`` pixels
+    are pixel-*centroid* POINTs, and re-deriving covariates from rasters by
+    clipping to those zero-area points nulls every pixel (see
+    :func:`peatfire.build_frame`). Passing the already-sampled values through
+    both avoids that trap and guarantees the model adjusts for exactly the values
+    the matching balanced on.
+
     Contract
-        Returns a GeoDataFrame with ``["unit_id", "site_id", "treated",
-        "geometry"]`` -- exactly what :func:`peatfire.build_frame` consumes.
+        Returns a GeoDataFrame with at least ``["unit_id", "site_id", "treated",
+        "geometry"]`` (plus ``pair_id`` and any sampled covariate columns) --
+        exactly what :func:`peatfire.build_frame` consumes.
     """
     required = ["unit_id", "site_id", "treated", "geometry"]
     missing = [c for c in required if c not in matched.columns]
@@ -640,7 +649,10 @@ def assemble_units(matched: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             f"assemble_units: matched set is missing {missing}; run match_controls() first."
         )
 
-    keep = required + [c for c in ("pair_id",) if c in matched.columns]
+    # Keep the required columns first, then every other column matching produced
+    # (covariates, x/y, restoration year, pair_id, ...) so build_frame can reuse
+    # the covariate values instead of re-sampling rasters at zero-area points.
+    keep = required + [c for c in matched.columns if c not in required]
     units = matched[keep].copy()
     # `site_id` is the restoration site (a project name); leave it as-is so
     # build_frame clusters on the site. `treated` must be a clean 0/1 integer.
