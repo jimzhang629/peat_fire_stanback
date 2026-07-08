@@ -28,6 +28,7 @@ from typing import Optional, Sequence
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
 from .covariates import available_covariates, covariate_on_grid  # noqa: F401
@@ -127,7 +128,7 @@ def pixelate(
     return points_in_polygon[['x', 'y', 'geometry']].reset_index(drop=True)
 
 def get_treated_and_control_pixels(
-    peat_aoi, treated, spillover_m=1000, res_m=300, treated_col_name="treated"
+    peat_aoi, treated, spillover_m=1000, res_m: float = DEFAULT_RES_M, treated_col_name="treated"
 ):
     """Build the labelled treated/control pixel set on one shared grid.
 
@@ -173,6 +174,7 @@ def attach_covariates(
     points: gpd.GeoDataFrame,
     names: Optional[Sequence[str]] = None,
     aoi: Optional[gpd.GeoDataFrame] = None,
+    res_m: float = DEFAULT_RES_M
 ) -> gpd.GeoDataFrame:
     """Stage 4. Add one column per covariate, sampled at each pixel.
 
@@ -186,11 +188,22 @@ def attach_covariates(
     """
     if names is None:
         names = available_covariates()
-    raise NotImplementedError(
-        "Stage 4: covariate_on_grid(name, grid, aoi) warps a layer onto the grid; "
-        "then index the cell each point sits in. Keep land cover categorical."
-    )
+    if aoi is None:
+        aoi = points
+    
+    grid = build_common_grid(aoi, res_m, ANALYSIS_CRS)
 
+    points = points.copy() # don't mutate the caller's gdf in place
+    xi = xr.DataArray(points['x'].values, dims='point')
+    yi = xr.DataArray(points['y'].values, dims='point')
+
+    for name in names:
+        cov = covariate_on_grid(name, grid, aoi)
+        if cov is None: # not downloaded yet, skip
+            continue
+        points[name] = cov.sel(x=xi, y=yi, method='nearest').values
+
+    return points
 
 def match_controls(
     pixels: gpd.GeoDataFrame,
@@ -218,7 +231,6 @@ def match_controls(
         "Stage 5: z-score the continuous columns, run sklearn NearestNeighbors "
         "WITHIN each categorical class, drop matches beyond the caliper."
     )
-
 
 def balance_table(
     pixels: gpd.GeoDataFrame,
