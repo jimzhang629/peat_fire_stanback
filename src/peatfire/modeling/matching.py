@@ -227,10 +227,8 @@ def match_controls(
         ``site_id`` is the matched stratum (pair) and control rows carry their
         distance to the treated partner (<= ``caliper``).
     """
-    raise NotImplementedError(
-        "Stage 5: z-score the continuous columns, run sklearn NearestNeighbors "
-        "WITHIN each categorical class, drop matches beyond the caliper."
-    )
+
+    
 
 def balance_table(
     pixels: gpd.GeoDataFrame,
