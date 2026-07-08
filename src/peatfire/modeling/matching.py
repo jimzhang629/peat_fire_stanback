@@ -31,7 +31,12 @@ import pandas as pd
 import xarray as xr
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
-from .covariates import available_covariates, covariate_on_grid  # noqa: F401
+from .covariates import (  # noqa: F401
+    available_covariates,
+    available_temporal_covariates,
+    covariate_on_grid,
+    temporal_covariate_on_grid,
+)
 from .frame import (  # noqa: F401
     DEFAULT_RES_M,
     load_completed_restoration_sites_in_analysis_crs,
@@ -320,6 +325,7 @@ def attach_covariates(
     aoi: Optional[gpd.GeoDataFrame] = None,
     res_m: float = DEFAULT_RES_M,
     year_col: str = "year",
+    temporal_names: Optional[Sequence[str]] = None,
 ) -> gpd.GeoDataFrame:
     """Stage 4. Add one column per covariate, sampled at each pixel.
 
@@ -327,17 +333,32 @@ def attach_covariates(
     continuous vs categorical (don't average land cover); your rule for pixels
     that are NaN in a covariate.
 
-    The covariates registered today are *static* -- they depend only on where a
-    pixel is ``(x, y)``, not on the calendar year. So when ``points`` is a
-    pixel-year panel (the same ``(x, y)`` repeated across many ``year_col`` values,
-    as produced by :func:`get_treated_and_control_pixels` with ``years``), we
-    sample each layer once on the *unique* pixels and broadcast the value back
-    across that pixel's years, instead of resampling the same raster once per
-    pixel-year. The result is identical, just built without the redundant reads.
+    Static covariates depend only on where a pixel is ``(x, y)``, not on the
+    calendar year. So when ``points`` is a pixel-year panel (the same ``(x, y)``
+    repeated across many ``year_col`` values, as produced by
+    :func:`get_treated_and_control_pixels` with ``years``), we sample each static
+    layer once on the *unique* pixels and broadcast the value back across that
+    pixel's years, instead of resampling the same raster once per pixel-year. The
+    result is identical, just built without the redundant reads.
 
-    Per-year (temporal) covariates -- climate such as PRISM/Daymet -- are keyed on
-    ``(x, y, year)`` and are a documented TODO below: when those layers land they
-    are sampled here using ``points[year_col]`` and joined on the year too.
+    Per-year (temporal) covariates -- year-specific weather, keyed on
+    ``(x, y, year)`` -- are sampled per calendar year: for each ``year`` in the
+    panel that layer's raster is warped onto the grid once and sampled at that
+    year's pixels, then merged back on ``["x", "y", year_col]`` so each pixel-year
+    gets *that year's* value. This is the panel-side per-year weather; the outcome
+    frame joins the same layers in :func:`peatfire.build_frame`. Note that
+    :func:`match_controls` collapses the panel to unique pixels and matches on the
+    *static* covariates only, so temporal columns added here are for panel-level
+    inspection / direct DiD on the panel, not the geographic match.
+
+    Parameters
+    ----------
+    names : sequence of str, optional
+        Static covariates to attach. Defaults to :func:`available_covariates`.
+    temporal_names : sequence of str, optional
+        Per-year covariates to attach. Only used when ``points`` carries
+        ``year_col``. Defaults to :func:`available_temporal_covariates` for the
+        panel's years (every per-year layer present for all those years).
 
     Contract (verified by :func:`check_covariates`)
         Returns ``points`` with one added column per requested covariate; no
@@ -368,9 +389,35 @@ def attach_covariates(
     sampled = [c for c in unique_px.columns if c not in ("x", "y")]
     points = points.merge(unique_px[["x", "y", *sampled]], on=["x", "y"], how="left")
 
-    # TODO(temporal covariates): per-year climate layers (PRISM/Daymet) are keyed
-    # on (x, y, year); when downloaded, sample them per `year_col` and merge on
-    # ["x", "y", year_col] here so each pixel-year gets that year's weather.
+    # Per-year (temporal) covariates: sample each layer once per calendar year and
+    # join on (x, y, year) so each pixel-year gets that year's weather.
+    if year_col in points.columns:
+        years = sorted(int(y) for y in points[year_col].dropna().unique())
+        if temporal_names is None:
+            temporal_names = available_temporal_covariates(years)
+        for name in temporal_names:
+            per_year = []
+            for year in years:
+                cov = temporal_covariate_on_grid(name, grid, aoi, year)
+                if cov is None:  # that year not built yet -> leave those rows NaN
+                    continue
+                px = (
+                    points.loc[points[year_col] == year, ["x", "y"]]
+                    .drop_duplicates()
+                    .reset_index(drop=True)
+                )
+                if px.empty:
+                    continue
+                txi = xr.DataArray(px["x"].values, dims="point")
+                tyi = xr.DataArray(px["y"].values, dims="point")
+                px[name] = cov.sel(x=txi, y=tyi, method="nearest").values
+                px[year_col] = year
+                per_year.append(px)
+            if per_year:
+                sampled_ty = pd.concat(per_year, ignore_index=True)
+                points = points.merge(
+                    sampled_ty, on=["x", "y", year_col], how="left"
+                )
 
     return points
 

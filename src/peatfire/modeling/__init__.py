@@ -23,12 +23,18 @@ explicit; ``build_frame`` consumes its output.
 
 from .covariates import (
     COVARIATES,
+    TEMPORAL_COVARIATES,
     CovariateSpec,
     available_covariates,
+    available_temporal_covariates,
     covariate_on_grid,
     get_covariate,
+    get_temporal_covariate,
     list_covariates,
+    list_temporal_covariates,
     load_covariate,
+    load_temporal_covariate,
+    temporal_covariate_on_grid,
 )
 from .frame import (
     build_frame,
@@ -47,11 +53,13 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     build_panel,
     estimate_att,
 )
-from .climate import (  # GHCN station points -> gridded climate-normal covariates
+from .climate import (  # GHCN station points -> gridded climate covariates
+    build_annual_climate,
     build_climate_normals,
     idw_to_grid,
     load_ghcn_stations,
     station_normals,
+    write_annual_climate,
     write_climate_normals,
 )
 from .soil import (  # SSURGO soil polygons -> gridded soil covariates
@@ -86,18 +94,26 @@ from .matching import (  # assignment scaffold (Part A stubs) + test harness (Pa
 
 __all__ = [
     "COVARIATES",
+    "TEMPORAL_COVARIATES",
     "CovariateSpec",
     "available_covariates",
+    "available_temporal_covariates",
     "covariate_on_grid",
     "get_covariate",
+    "get_temporal_covariate",
     "list_covariates",
+    "list_temporal_covariates",
     "load_covariate",
+    "load_temporal_covariate",
+    "temporal_covariate_on_grid",
     "build_frame",
     "load_completed_restoration_sites_in_analysis_crs",
+    "build_annual_climate",
     "build_climate_normals",
     "idw_to_grid",
     "load_ghcn_stations",
     "station_normals",
+    "write_annual_climate",
     "write_climate_normals",
     "build_soil_rasters",
     "inspect_soil_columns",

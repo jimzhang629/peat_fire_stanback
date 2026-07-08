@@ -33,6 +33,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio.features
+import shapely.geometry
 import xarray as xr
 
 from ..preproc.data_loading import data_path
@@ -42,7 +43,12 @@ from ..fire_products_comparison.fire_comparison import (
     to_common_grid,
 )
 from ..fire_products_comparison.fire_products import load_standardized
-from .covariates import available_covariates, covariate_on_grid
+from .covariates import (
+    available_covariates,
+    available_temporal_covariates,
+    covariate_on_grid,
+    temporal_covariate_on_grid,
+)
 
 # FireCCIS311 is ~300 m; default the modeling grid to its native resolution so
 # the response is not needlessly upsampled. Override per call as needed.
@@ -150,6 +156,7 @@ def build_frame(
     product: str = "FireCCIS311",
     years: Iterable[int] = range(2019, 2025),
     covariate_names: Optional[Sequence[str]] = None,
+    temporal_covariate_names: Optional[Sequence[str]] = None,
     res_m: float = DEFAULT_RES_M,
     unit_id_col: str = "unit_id",
     site_id_col: str = "Proj_Name",
@@ -170,18 +177,24 @@ def build_frame(
     years : iterable of int
         Years to stack (FireCCIS311 covers 2019-2024).
     covariate_names : sequence of str, optional
-        Which registered covariates to attach. Defaults to every covariate whose
-        file is currently on disk (:func:`available_covariates`), so this runs on
-        elevation + histosol % today and picks up the rest as they download.
+        Which registered *static* covariates to attach. Defaults to every covariate
+        whose file is currently on disk (:func:`available_covariates`), so this
+        runs on elevation + histosol % today and picks up the rest as they download.
+    temporal_covariate_names : sequence of str, optional
+        Which registered *per-year* covariates (year-specific weather) to attach,
+        joined on ``(x, y, year)`` so each cell-year gets that year's value -- the
+        columns a ``treated:precip`` dry-year interaction needs. Defaults to
+        :func:`available_temporal_covariates` for ``years`` (every per-year layer
+        present for all requested years).
     res_m : float
         Grid resolution in metres (default = FireCCIS311 native ~300 m).
 
     Returns
     -------
     DataFrame
-        One row per unit-cell-year, static covariates repeated across years, with
-        a boolean/float ``burned`` response. Cells outside every unit are dropped.
-        (Temporal covariates -- climate -- are a documented TODO below.)
+        One row per unit-cell-year: static covariates repeated across years,
+        per-year covariates varying by year, and a boolean/float ``burned``
+        response. Cells outside every unit are dropped.
     """
     units = units.to_crs(ANALYSIS_CRS).reset_index(drop=True)
     if unit_id_col not in units:
@@ -229,6 +242,20 @@ def build_frame(
 
     static = pd.DataFrame(base)
 
+    # Per-year (temporal) covariates: default to every layer present for all the
+    # requested years. Warped onto the same grid per year and read at in_unit
+    # cells, exactly like the static covariates and the response.
+    years = list(years)
+    if temporal_covariate_names is None:
+        temporal_covariate_names = available_temporal_covariates(years)
+    # Clip the per-year rasters to the units' bounding *box*, not to `units`
+    # itself: matched units are zero-area pixel-centroid POINTs, and clipping a
+    # raster to those points nulls every pixel (see assemble_units). The box is a
+    # real area covering the grid, so the layer loads before it is warped on-grid.
+    frame_aoi = gpd.GeoDataFrame(
+        geometry=[shapely.geometry.box(*units.total_bounds)], crs=units.crs
+    )
+
     # --- response, per year (the swappable DV) ---
     rows = []
     for year in years:
@@ -239,8 +266,12 @@ def build_frame(
         year_df = static.copy()
         year_df["year"] = year
         year_df["burned"] = burned.values[in_unit]
-        # TODO(temporal covariates): join per-year climate (PRISM/Daymet) here,
-        # keyed on (x, y, year), once those layers are downloaded.
+        # Per-year climate: that year's weather at each cell (keyed on x, y, year).
+        for name in temporal_covariate_names:
+            cov = temporal_covariate_on_grid(name, grid, frame_aoi, year)
+            if cov is None:
+                continue  # that year not built yet -> covariates.py already warned
+            year_df[name] = cov.values[in_unit]
         rows.append(year_df)
 
     if not rows:
