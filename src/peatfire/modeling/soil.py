@@ -36,6 +36,7 @@ message -- any column it cannot find.
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -89,8 +90,51 @@ def _col_ci(df, name: str) -> Optional[str]:
     return lower.get(name.lower())
 
 
+@functools.lru_cache(maxsize=None)
+def _readable_gpkg(gpkg_path: str) -> str:
+    """Return a path to the GeoPackage that GDAL can reliably open.
+
+    A GeoPackage is a SQLite database. On a read-only / lock-contended location
+    -- a OneDrive- or iCloud-synced folder, a read-only mount, or a stale
+    ``-wal``/``-shm`` lock sidecar -- GDAL can fail to open it *at all* ("Failed
+    to open dataset (flags=68)", "attempt to write a readonly database") even for
+    a read, because SQLite wants to touch the file. :func:`read_vector_resilient`
+    already works around this for the polygon read, but the layer-enumeration and
+    attribute-table reads below (:func:`_list_layers`, :func:`_spatial_layer`,
+    :func:`_read_gpkg_table`) open the file directly, so they used to fail on
+    exactly these datasets while the polygon read succeeded.
+
+    This probes whether GDAL can open the file in place and, if not, copies it
+    (plus any ``-wal``/``-shm`` sidecars) into a writable temp dir and returns
+    that copy. The result is memoized, so the (large) file is copied **at most
+    once per process** and every reader below shares the one writable copy rather
+    than each copying it again.
+    """
+    import pyogrio
+
+    src = Path(gpkg_path)
+    try:
+        pyogrio.list_layers(str(src))  # cheap probe: can GDAL open it read-only?
+        return str(src)
+    except Exception:  # noqa: BLE001 -- readonly / locked: read from a writable copy
+        import os
+        import shutil
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="peatfire_gpkg_"))
+        dst = tmp / src.name
+        shutil.copy2(src, dst)
+        for side in ("-wal", "-shm"):  # SQLite lock/journal sidecars, if any
+            s = src.with_name(src.name + side)
+            if s.exists():
+                shutil.copy2(s, tmp / s.name)
+        os.chmod(dst, 0o644)
+        return str(dst)
+
+
 def _list_layers(gpkg_path) -> list[str]:
     """Names of every layer/table in the GeoPackage (spatial and attribute-only)."""
+    gpkg_path = _readable_gpkg(str(gpkg_path))
     try:
         import pyogrio
 
@@ -103,6 +147,7 @@ def _list_layers(gpkg_path) -> list[str]:
 
 def _spatial_layer(gpkg_path) -> Optional[str]:
     """Name of the polygon layer, so we can read it without the multi-layer warning."""
+    gpkg_path = _readable_gpkg(str(gpkg_path))
     try:
         import pyogrio
 
@@ -118,32 +163,17 @@ def _spatial_layer(gpkg_path) -> Optional[str]:
 def _read_gpkg_table(gpkg_path, layer: str) -> pd.DataFrame:
     """Read one GeoPackage attribute table (no geometry), resilient to read-only DBs.
 
-    Mirrors :func:`read_vector_resilient`'s writable-copy workaround, but reads a
+    Resolves the path through :func:`_readable_gpkg` (a writable copy when the
+    original can't be opened -- e.g. a OneDrive-synced GeoPackage), then reads a
     *named* layer with the geometry dropped (these SSURGO tables have none), so the
     relational ``component`` / ``chorizon`` tables come back as plain DataFrames.
     """
     import pyogrio
 
-    def _read(p) -> pd.DataFrame:
-        return pd.DataFrame(pyogrio.read_dataframe(p, layer=layer, read_geometry=False))
-
-    try:
-        return _read(gpkg_path)
-    except Exception:  # noqa: BLE001 -- readonly-db: retry from a writable copy
-        import os
-        import shutil
-        import tempfile
-
-        src = Path(gpkg_path)
-        tmp = Path(tempfile.mkdtemp(prefix="peatfire_gpkg_"))
-        dst = tmp / src.name
-        shutil.copy2(src, dst)
-        for side in ("-wal", "-shm"):
-            s = src.with_name(src.name + side)
-            if s.exists():
-                shutil.copy2(s, tmp / s.name)
-        os.chmod(dst, 0o644)
-        return _read(dst)
+    gpkg_path = _readable_gpkg(str(gpkg_path))
+    return pd.DataFrame(
+        pyogrio.read_dataframe(gpkg_path, layer=layer, read_geometry=False)
+    )
 
 
 def _weighted_mean_by(df: pd.DataFrame, key, value, weight) -> pd.Series:
@@ -284,6 +314,9 @@ def inspect_soil_columns(gpkg_path=None) -> pd.DataFrame:
     """
     if gpkg_path is None:
         gpkg_path = data_path("interim", "soil", "ssurgo", "nc_soil_ssurgo.gpkg")
+    # Resolve once to a GDAL-openable path (a writable copy if the original is a
+    # locked / read-only GeoPackage) so every read below shares the one copy.
+    gpkg_path = _readable_gpkg(str(gpkg_path))
 
     # Read the polygon layer by name so the multi-layer read doesn't warn.
     spatial = _spatial_layer(gpkg_path)
@@ -407,6 +440,10 @@ def build_soil_rasters(
         gpkg_path = data_path("interim", "soil", "ssurgo", "nc_soil_ssurgo.gpkg")
     if aoi is None:
         raise ValueError("build_soil_rasters needs an `aoi` to define the grid.")
+    # Resolve once to a GDAL-openable path (a writable copy if the original is a
+    # locked / read-only GeoPackage) so the polygon read and every relational
+    # table lookup below share the one copy.
+    gpkg_path = _readable_gpkg(str(gpkg_path))
     attributes = attributes or DEFAULT_SOIL_ATTRIBUTES
     out_dir = Path(out_dir) if out_dir is not None else data_path(*SOIL_DIR_PARTS)
     out_dir.mkdir(parents=True, exist_ok=True)
