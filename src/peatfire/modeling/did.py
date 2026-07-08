@@ -82,9 +82,9 @@ def attach_cohort(
         Output of :func:`peatfire.modeling.build_frame` (one row per unit-year).
     cohort_by : mapping or Series
         Maps each ``key`` value (default ``site_id``) to the site's first
-        treatment year -- i.e. the restoration ``pivot_year`` from Stage 1 of the
-        matching assignment (:func:`peatfire.modeling.load_treated_units`). Control
-        strata should map to ``0`` / ``NaN`` (both read as never-treated).
+        treatment year -- i.e. the restoration year (``End_Yr``) from Stage 1 of
+        the matching assignment (:func:`peatfire.modeling.load_treated_units`).
+        Control strata should map to ``0`` / ``NaN`` (both read as never-treated).
     key : str
         Column used to look up the cohort (``site_id`` if you assigned each matched
         stratum a shared id; ``unit_id`` if cohorts are per pixel).
@@ -116,7 +116,7 @@ def attach_cohort(
         raise ValueError(
             f"{int(missing_treated.sum())} treated rows have no cohort year in "
             f"`cohort_by` (e.g. {key}={list(bad)}). Every treated site needs its "
-            f"restoration pivot_year; only controls may be missing."
+            f"restoration year (End_Yr); only controls may be missing."
         )
 
     out = frame.copy()
