@@ -214,6 +214,14 @@ def build_frame(
     if covariate_names is None:
         covariate_names = available_covariates()
     for name in covariate_names:
+        if name in units.columns:
+            # Already sampled upstream (matching balanced on it). Burn the
+            # per-unit value onto its cells the same way as unit_id/treated,
+            # rather than re-reading the raster -- clipping a raster to the
+            # zero-area pixel-centroid POINTs in `units` masks every pixel and
+            # would null the whole column.
+            base[name] = _rasterize_values(units, units[name], grid)[in_unit]
+            continue
         cov = covariate_on_grid(name, grid, units)
         if cov is None:
             continue  # not downloaded yet -> covariates.py already warned
