@@ -391,8 +391,8 @@ def plot_candidate_pixels_geographic(
     restoration_yr_col: str = "End_Yr",
     aoi_context: Optional[gpd.GeoDataFrame] = None,
     max_control: int = 40000,
-    treated_color: str = "red",
-    control_color: str = "green",
+    treated_color: str = TREATED_COLOR,
+    control_color: str = CONTROL_COLOR,
     aoi_label: str = ">=80% histosol boundary",
     ax: Optional[plt.Axes] = None,
 ):
@@ -426,8 +426,10 @@ def plot_candidate_pixels_geographic(
         Extra outline (e.g. the NC state boundary) for geographic reference.
     max_control : int, default 40000
         Cap on candidate-control points scatter-plotted (subsampled if exceeded).
-    treated_color, control_color : str, default ``"red"`` / ``"green"``
-        Colours for the treated and candidate-control pixels.
+    treated_color, control_color : str, optional
+        Colours for the treated and candidate-control pixels; default to the
+        module's Okabe-Ito :data:`TREATED_COLOR` (vermillion) and
+        :data:`CONTROL_COLOR` (blue), matching every other diagnostic here.
     aoi_label : str, default ``">=80% histosol boundary"``
         Legend label for the ``aoi`` outline.
 
