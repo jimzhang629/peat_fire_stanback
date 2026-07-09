@@ -22,6 +22,10 @@ The functions, in pipeline order:
   inspected at once.
 * :func:`plot_matched_pairs_covariate` -- treated and its matched control joined
   by a segment in covariate space; short segments = good matches.
+* :func:`plot_candidate_pixels_geographic` -- the *whole* treated + candidate
+  control pixel pool on the map (before matching), coloured by group, so you can
+  see where the two populations sit across NC and how the control pool blankets
+  the peat frame.
 * :func:`plot_matched_pairs_geographic` -- the same pairs on the map, so you can
   see *how far* across the landscape each control was drawn from its treated site.
 * :func:`plot_event_study` -- the one *temporal* diagnostic: the staggered-DiD ATT
@@ -377,6 +381,100 @@ def plot_matched_pairs_covariate(
     ax.set_ylabel(ycov)
     ax.set_title(f"Matched pairs in ({xcov}, {ycov}) space\n(line = one treated↔control match)")
     ax.legend(loc="best")
+    return fig
+
+
+def plot_candidate_pixels_geographic(
+    pixels: gpd.GeoDataFrame,
+    aoi: Optional[gpd.GeoDataFrame] = None,
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    aoi_context: Optional[gpd.GeoDataFrame] = None,
+    max_control: int = 40000,
+    treated_color: str = "red",
+    control_color: str = "green",
+    aoi_label: str = ">=80% histosol boundary",
+    ax: Optional[plt.Axes] = None,
+):
+    """Map the treated and candidate-control pixels over NC, coloured by group.
+
+    The geographic companion to :func:`plot_covariate_space`: instead of the two
+    covariate axes, it drops every treated (restoration-site) pixel and every
+    candidate-control pixel onto the map so you can see *where* the two
+    populations sit across the peat frame -- treated in a handful of restoration
+    clusters, controls blanketing the rest of the peatland. It consumes the
+    unmatched pixel(-year) set from
+    :func:`matching.get_treated_and_control_pixels`, so this is the picture
+    *before* matching (the pool the match draws controls from), the counterpart
+    to :func:`plot_matched_pairs_geographic` after it.
+
+    The treated/candidate split uses the same rule as
+    :func:`matching.balance_table` (restoration-site membership on the panel), and
+    a pixel-year panel is collapsed to unique pixels first so each physical pixel
+    is drawn once. Controls are subsampled to ``max_control`` points for
+    legibility (the pool is large); treated are always drawn in full and on top.
+
+    Parameters
+    ----------
+    pixels : GeoDataFrame
+        Treated + candidate-control pixels (EPSG:5070), as returned by
+        :func:`matching.get_treated_and_control_pixels`. May be a pixel-year panel.
+    aoi : GeoDataFrame, optional
+        Peat AOI outline drawn (and labelled) for orientation -- e.g. the
+        ``>=80%`` histosol frame the pixels were drawn from.
+    aoi_context : GeoDataFrame, optional
+        Extra outline (e.g. the NC state boundary) for geographic reference.
+    max_control : int, default 40000
+        Cap on candidate-control points scatter-plotted (subsampled if exceeded).
+    treated_color, control_color : str, default ``"red"`` / ``"green"``
+        Colours for the treated and candidate-control pixels.
+    aoi_label : str, default ``">=80% histosol boundary"``
+        Legend label for the ``aoi`` outline.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    set_fire_style()
+    is_t = _treated_mask(pixels, treated_col, restoration_yr_col)
+    # Collapse a pixel-year panel to one row per physical pixel, keeping x/y for
+    # the map, so a pixel repeated across years is plotted once.
+    sub = _unique_pixels(pixels.assign(_t=is_t.values), ["_t"])
+    t = sub[sub["_t"]]
+    c = sub[~sub["_t"]]
+    if len(c) > max_control:
+        c = c.sample(max_control, random_state=0)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 7))
+    else:
+        fig = ax.figure
+
+    handles = []
+    if aoi is not None:
+        # The peat frame the pixels came from -- e.g. the >=80% histosol boundary.
+        aoi.to_crs(ANALYSIS_CRS).dissolve().boundary.plot(
+            ax=ax, color="0.35", linewidth=1.0, zorder=4
+        )
+        handles.append(plt.Line2D([0], [0], color="0.35", lw=1.0, label=aoi_label))
+    if aoi_context is not None:
+        aoi_context.to_crs(ANALYSIS_CRS).boundary.plot(
+            ax=ax, color="0.55", linewidth=0.8, ls="--", zorder=1
+        )
+
+    # x/y are the pixel-centroid coordinates on the EPSG:5070 grid, so they line
+    # up cell-for-cell with the AOI drawn above.
+    handles.append(ax.scatter(
+        c["x"], c["y"], s=6, alpha=0.35, color=control_color,
+        edgecolor="none", label=f"candidate control (n={len(c):,})", zorder=2))
+    handles.append(ax.scatter(
+        t["x"], t["y"], s=12, alpha=0.85, color=treated_color,
+        edgecolor="none", label=f"treated (n={len(t):,})", zorder=3))
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title("Treated vs candidate-control pixels across NC")
+    ax.legend(handles=handles, loc="best", markerscale=2)
     return fig
 
 

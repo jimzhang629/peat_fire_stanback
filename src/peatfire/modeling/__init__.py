@@ -68,6 +68,7 @@ from .soil import (  # SSURGO soil polygons -> gridded soil covariates
     mukey_attribute,
 )
 from .plotting import (  # step-by-step data-inspection diagnostics
+    plot_candidate_pixels_geographic,
     plot_covariate_maps,
     plot_covariate_pairs,
     plot_covariate_space,
@@ -119,6 +120,7 @@ __all__ = [
     "build_soil_rasters",
     "inspect_soil_columns",
     "mukey_attribute",
+    "plot_candidate_pixels_geographic",
     "plot_covariate_maps",
     "plot_covariate_pairs",
     "plot_covariate_space",
