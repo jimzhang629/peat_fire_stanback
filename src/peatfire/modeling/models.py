@@ -32,6 +32,142 @@ def _formula(response: str, treatment: str, covariates: Sequence[str]) -> str:
     return f"{response} ~ {rhs}"
 
 
+def _standardize_predictors(
+    clean: pd.DataFrame,
+    cols: Sequence[str],
+    response: str,
+    treatment: str,
+    cluster: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Center-and-scale the continuous predictors (on a copy) for stability.
+
+    The logit is fit by Newton/IRLS, whose Hessian is ``X'WX``; the fit inverts it
+    (``np.linalg.inv(-Hessian)``). When the columns of ``X`` live on wildly
+    different scales -- elevation in metres (~1e1), ``precip_normal`` in mm (~1e3),
+    temperatures in degrees C -- that matrix is badly conditioned, its inverse
+    blows up into a spurious ``LinAlgError: Singular matrix``, and the extreme
+    linear predictor trips the ``overflow in exp`` / ``divide by zero in log``
+    warnings you see just before it. Centering each continuous covariate to mean 0
+    and scaling to SD 1 fixes the conditioning without changing the model: the
+    ``treated`` odds ratio (the headline) is left exactly as-is because ``treated``
+    stays raw 0/1, and each covariate simply reports a *per-standard-deviation*
+    odds ratio. It does **not** cure genuine collinearity or a constant column --
+    those are caught by :func:`_rank_deficiency_report` with an actionable error.
+
+    Returns ``(scaled_copy, names_scaled)``. Raises when a covariate has zero
+    variance over the rows being fit (a constant column carries no information and
+    on its own makes the design singular).
+    """
+    skip = {response, treatment, cluster}
+    out = clean.copy()
+    scaled: list[str] = []
+    constant: list[str] = []
+    for c in cols:
+        if c in skip or not pd.api.types.is_numeric_dtype(out[c]):
+            continue
+        sd = out[c].std(ddof=0)
+        if not np.isfinite(sd) or sd == 0:  # zero-variance: a constant column
+            constant.append(c)
+            continue
+        if out[c].nunique() <= 2:  # binary / indicator: leave on its native scale
+            continue
+        out[c] = (out[c] - out[c].mean()) / sd
+        scaled.append(c)
+    if constant:
+        raise ValueError(
+            f"Cannot fit: covariate(s) {constant} are constant over the "
+            f"{len(out)} rows being fit, so they add a column with no variation, "
+            "carry no information, and make the design matrix singular. This "
+            "usually means the layer is flat over the matched set (e.g. the "
+            "near-constant histosol % once you subset to peat) or is misaligned to "
+            "the grid -- drop it from `covariates`."
+        )
+    return out, scaled
+
+
+def _rank_deficiency_report(formula: str, clean: pd.DataFrame) -> Optional[str]:
+    """Actionable message if the model's design matrix is rank-deficient, else None.
+
+    Perfectly (or near-perfectly) collinear predictors -- e.g. ``tmax_normal`` and
+    ``tmin_normal``, two tightly coupled climate normals -- leave ``X'X`` singular
+    no matter how well the columns are scaled, so the fit either crashes with
+    "Singular matrix" or, worse, silently returns meaningless coefficients. We
+    catch it up front and name the redundant columns (with their closest partner)
+    so the caller knows exactly which covariate to drop.
+    """
+    try:
+        import patsy
+        from scipy import linalg
+    except Exception:  # pragma: no cover - diagnostics are best-effort
+        return None
+    try:
+        _y, X = patsy.dmatrices(formula, clean, return_type="dataframe")
+    except Exception:  # pragma: no cover - let the real fit surface formula errors
+        return None
+    Xv = np.asarray(X, dtype=float)
+    rank = np.linalg.matrix_rank(Xv)
+    if rank >= Xv.shape[1]:
+        return None
+    # QR with column pivoting orders columns by how much independent information
+    # each adds; everything past `rank` is linearly explained by the earlier ones.
+    _q, _r, piv = linalg.qr(Xv, mode="economic", pivoting=True)
+    redundant = [str(X.columns[i]) for i in piv[rank:]]
+    non_intercept = [c for c in X.columns if c != "Intercept"]
+    corr = X[non_intercept].corr().abs() if len(non_intercept) > 1 else None
+    notes = []
+    for r in redundant:
+        if corr is not None and r in corr.columns:
+            partners = corr[r].drop(index=r, errors="ignore")
+            if len(partners) and np.isfinite(partners.max()):
+                j = partners.idxmax()
+                notes.append(f"{r} (|r|={partners[j]:.3f} with {j})")
+                continue
+        notes.append(r)
+    return (
+        "the design matrix is rank-deficient: these column(s) are (near-)perfectly "
+        f"collinear and one of each redundant set must be dropped -> {'; '.join(notes)}. "
+        "Tightly coupled normals such as tmax_normal and tmin_normal are the usual "
+        "culprit; keep one, or replace the pair with their mean/difference."
+    )
+
+
+def _separation_report(formula: str, clean: pd.DataFrame) -> Optional[str]:
+    """Actionable message if a covariate perfectly separates the outcome, else None.
+
+    Fire is rare here, which makes (quasi-)complete separation easy: if some
+    covariate's values for the burned pixels never overlap the unburned ones, the
+    corresponding logit coefficient runs off to +/-inf and the Hessian degenerates.
+    We report which covariate does it so the caller can drop it or switch to a
+    penalized (Firth/ridge) fit.
+    """
+    try:
+        import patsy
+    except Exception:  # pragma: no cover
+        return None
+    try:
+        y, X = patsy.dmatrices(formula, clean, return_type="dataframe")
+    except Exception:  # pragma: no cover
+        return None
+    yv = np.asarray(y, dtype=float).ravel()
+    if not set(np.unique(yv)) <= {0.0, 1.0} or not 0 < yv.sum() < len(yv):
+        return None
+    separators = []
+    for c in X.columns:
+        if c == "Intercept":
+            continue
+        x = np.asarray(X[c], dtype=float)
+        x0, x1 = x[yv == 0], x[yv == 1]
+        if x0.size and x1.size and (x0.min() > x1.max() or x1.min() > x0.max()):
+            separators.append(str(c))
+    if not separators:
+        return None
+    return (
+        f"covariate(s) {separators} perfectly separate burned from unburned pixels, "
+        "so their logit coefficient diverges (fire is rare, which makes this easy). "
+        "Drop the covariate or fit a penalized/Firth logit."
+    )
+
+
 def _model_columns(
     frame: pd.DataFrame,
     response: str,
@@ -64,6 +200,7 @@ def fit_logit_clustered(
     treatment: str = "treated",
     cluster: str = "site_id",
     formula: Optional[str] = None,
+    standardize: bool = True,
 ):
     """Fit logistic ``response ~ treatment + covariates`` with cluster-robust SEs.
 
@@ -85,13 +222,31 @@ def fit_logit_clustered(
     formula : str, optional
         Override the auto-built ``response ~ treatment + covariates`` formula (e.g.
         to add an interaction like ``treated:precip``).
+    standardize : bool, default True
+        Center-and-scale the continuous covariates to mean 0 / SD 1 before fitting.
+        This is a pure numerical-conditioning step: covariates on wildly different
+        scales (elevation in metres vs ``precip_normal`` in mm) otherwise make the
+        Hessian ill-conditioned and the fit dies with ``LinAlgError: Singular
+        matrix`` (preceded by ``overflow in exp`` warnings). It does not change the
+        ``treated`` odds ratio -- ``treated`` stays raw 0/1 -- but each adjusted
+        covariate then reports a *per-standard-deviation* odds ratio. Turn it off
+        only if you need coefficients in the covariates' native units.
 
     Returns
     -------
     statsmodels results
         Call :func:`odds_ratios` on it for the interpretable table.
+
+    Raises
+    ------
+    ValueError
+        With an actionable message when the model cannot be identified: a constant
+        covariate, (near-)perfectly collinear covariates (e.g. ``tmax_normal`` /
+        ``tmin_normal``), or a covariate that perfectly separates the outcome --
+        the structural reasons behind an otherwise opaque "Singular matrix".
     """
     import statsmodels.formula.api as smf
+    from statsmodels.tools.sm_exceptions import PerfectSeparationError
 
     formula = formula or _formula(response, treatment, covariates)
 
@@ -130,12 +285,39 @@ def fit_logit_clustered(
             "and wipe out the fit -- drop it from `covariates` or fix its layer."
         )
 
+    # Standardize continuous covariates for numerical conditioning (and catch a
+    # constant covariate with a precise message), then reject a rank-deficient
+    # design up front: statsmodels would otherwise either crash with a bare
+    # "Singular matrix" or, worse, silently return meaningless coefficients.
+    if standardize:
+        clean, _ = _standardize_predictors(
+            clean, cols, response, treatment, cluster
+        )
+    rank_problem = _rank_deficiency_report(formula, clean)
+    if rank_problem is not None:
+        raise ValueError(f"Cannot fit {formula!r}: {rank_problem}")
+
     model = smf.logit(formula, data=clean)
-    return model.fit(
-        disp=False,
-        cov_type="cluster",
-        cov_kwds={"groups": clean[cluster]},
-    )
+    try:
+        return model.fit(
+            disp=False,
+            cov_type="cluster",
+            cov_kwds={"groups": clean[cluster]},
+        )
+    except (np.linalg.LinAlgError, PerfectSeparationError) as err:
+        # The MLE / its Hessian does not exist. We already ruled out bad scaling
+        # (standardized) and rank deficiency (checked above), so the remaining
+        # structural cause is usually separation -- diagnose it if we can.
+        sep = _separation_report(formula, clean)
+        detail = f" Likely cause: {sep}" if sep else (
+            " Standardizing and the rank check rule out scaling and collinearity, "
+            "so this is a degenerate fit -- too few burned pixels for the number "
+            "of covariates, or (quasi-)separation. Try fewer covariates."
+        )
+        raise ValueError(
+            f"Clustered logit for {formula!r} failed with a singular/degenerate "
+            f"Hessian ({type(err).__name__})." + detail
+        ) from err
 
 
 def fit_mixed_logit(
