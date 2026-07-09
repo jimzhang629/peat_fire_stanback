@@ -80,7 +80,7 @@ nc.prcp <- as.data.frame(do.call(bind_rows, nc.climate$tabular))$PRCP %>%
 
 # save above dataframes
 saveRDS(nc.max,  "data/interim/climate/ghcn/nc_tmax_long.Rds")
-saveRDS(c.min,  "data/interim/climate/ghcn/nc_tmin_long.Rds")
+saveRDS(nc.min,  "data/interim/climate/ghcn/nc_tmin_long.Rds")
 saveRDS(nc.prcp, "data/interim/climate/ghcn/nc_prcp_long.Rds")
 
 ################################################################################
