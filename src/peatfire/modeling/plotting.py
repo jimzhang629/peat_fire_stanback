@@ -24,6 +24,9 @@ The functions, in pipeline order:
   by a segment in covariate space; short segments = good matches.
 * :func:`plot_matched_pairs_geographic` -- the same pairs on the map, so you can
   see *how far* across the landscape each control was drawn from its treated site.
+* :func:`plot_candidate_control_pixels` -- the full control candidate pool drawn
+  over NC, with the subset actually chosen as controls highlighted on top, so you
+  can see which candidates the match drew on and how they sit against the pool.
 * :func:`plot_event_study` -- the one *temporal* diagnostic: the staggered-DiD ATT
   by time since restoration (event time), pre-period points shaded as the
   parallel-trends check. Consumes ``did.aggregate_att(..., kind="event")``.
@@ -440,6 +443,110 @@ def plot_matched_pairs_geographic(
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_title("Matched pairs across NC\n(line = treated↔its matched control)")
+    ax.legend(loc="best")
+    return fig
+
+
+def plot_candidate_control_pixels(
+    pixels: gpd.GeoDataFrame,
+    matched: Optional[gpd.GeoDataFrame] = None,
+    aoi: Optional[gpd.GeoDataFrame] = None,
+    aoi_context: Optional[gpd.GeoDataFrame] = None,
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    show_treated: bool = True,
+    max_candidates: int = 40000,
+    ax: Optional[plt.Axes] = None,
+):
+    """Map the control candidate pool -- and, if matched, the selected controls -- over NC.
+
+    The geographic "where did the controls come from" picture. It draws the full
+    control **candidate pool** (every peat pixel outside the treated + spillover
+    halo, i.e. ``treated == 0`` in the pre-match set from
+    :func:`matching.get_treated_and_control_pixels`) as a faint backdrop, so you
+    can see the pool's spatial coverage across the peat frame. When a ``matched``
+    set is passed, the subset actually chosen as **controls**
+    (:func:`matching.match_controls`, ``treated == 0``) is highlighted on top --
+    the direct picture of *which* candidates the match drew on and whether they
+    cluster near the treated sites or scatter across the state.
+
+    Complements :func:`plot_matched_pairs_geographic` (which connects each treated
+    pixel to its matched control): here the emphasis is the candidate pool as a
+    whole against the handful of selected controls, not the pairings.
+
+    Parameters
+    ----------
+    pixels : GeoDataFrame
+        Pre-match pixel (or pixel-year) set from
+        :func:`matching.get_treated_and_control_pixels`. The candidate pool is its
+        control group; a pixel-year panel is collapsed to unique pixels first.
+    matched : GeoDataFrame, optional
+        Matched set from :func:`matching.match_controls`. Its ``treated == 0`` rows
+        are drawn as the selected controls; when omitted only the pool is shown.
+    aoi : GeoDataFrame, optional
+        Peat AOI outline (e.g. the 80% peat frame) for orientation.
+    aoi_context : GeoDataFrame, optional
+        Extra outline (e.g. the NC boundary) for geographic reference.
+    show_treated : bool, default True
+        Also plot the treated (restoration) pixels for context.
+    max_candidates : int, default 40000
+        Subsample the candidate-pool scatter to this many points for legibility
+        (the pool is large); the selected controls and treated are always full.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    set_fire_style()
+    px = pixels.to_crs(ANALYSIS_CRS)
+    is_t = _treated_mask(px, treated_col, restoration_yr_col)
+    # Collapse a pixel-year panel to one row per physical pixel, keeping geometry
+    # (unlike `_unique_pixels`, which drops it -- we need it for the map).
+    uniq = px.assign(_t=is_t.values)
+    if {"x", "y"}.issubset(uniq.columns):
+        uniq = uniq.drop_duplicates(subset=["x", "y"])
+    pool = uniq[~uniq["_t"]]
+    treated = uniq[uniq["_t"]]
+
+    pool_plot = pool.sample(max_candidates, random_state=0) if len(pool) > max_candidates else pool
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 7))
+    else:
+        fig = ax.figure
+
+    if aoi is not None:
+        aoi.to_crs(ANALYSIS_CRS).dissolve().boundary.plot(
+            ax=ax, color="0.6", linewidth=0.6, alpha=0.6, zorder=1
+        )
+    if aoi_context is not None:
+        aoi_context.to_crs(ANALYSIS_CRS).boundary.plot(
+            ax=ax, color="0.4", linewidth=0.8, zorder=1
+        )
+
+    ax.scatter(
+        pool_plot.geometry.x, pool_plot.geometry.y, s=4, alpha=0.25, color="0.6",
+        edgecolor="none", label=f"candidate pool (n={len(pool):,})", zorder=2,
+    )
+    if matched is not None:
+        mc = matched.to_crs(ANALYSIS_CRS)
+        sel = mc[mc[treated_col] == 0].drop_duplicates(subset=["x", "y"]) \
+            if {"x", "y"}.issubset(mc.columns) else mc[mc[treated_col] == 0]
+        ax.scatter(
+            sel.geometry.x, sel.geometry.y, s=14, color=CONTROL_COLOR,
+            edgecolor="none", alpha=0.8,
+            label=f"matched control (n={len(sel):,})", zorder=3,
+        )
+    if show_treated and len(treated):
+        ax.scatter(
+            treated.geometry.x, treated.geometry.y, s=14, color=TREATED_COLOR,
+            edgecolor="none", label=f"treated (n={len(treated):,})", zorder=4,
+        )
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title("Candidate pool and selected controls across NC")
     ax.legend(loc="best")
     return fig
 
