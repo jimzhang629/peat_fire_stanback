@@ -24,6 +24,9 @@ The functions, in pipeline order:
   by a segment in covariate space; short segments = good matches.
 * :func:`plot_matched_pairs_geographic` -- the same pairs on the map, so you can
   see *how far* across the landscape each control was drawn from its treated site.
+* :func:`plot_event_study` -- the one *temporal* diagnostic: the staggered-DiD ATT
+  by time since restoration (event time), pre-period points shaded as the
+  parallel-trends check. Consumes ``did.aggregate_att(..., kind="event")``.
 
 Every function returns the matplotlib ``Figure`` (or ``Axes`` where an ``ax`` was
 passed) so the caller can save it next to the other modeling figures.
@@ -437,5 +440,196 @@ def plot_matched_pairs_geographic(
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_title("Matched pairs across NC\n(line = treated↔its matched control)")
+    ax.legend(loc="best")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 4. Event study (the temporal / parallel-trends picture)
+# ---------------------------------------------------------------------------
+# Candidate column names for the tidy event-study frame, so this reads the output
+# of either DiD backend (`differences` returns a pandas frame; the R `did` path a
+# converted frame) without the caller renaming anything. Matched case-insensitively,
+# exact name first then substring; pass the *_col arguments to override.
+_EVENT_TIME_CANDIDATES = (
+    "relative_period", "event_time", "event time", "egt",
+    "exposure", "period", "rel_year", "time_to_treatment",
+)
+_ESTIMATE_CANDIDATES = ("att", "estimate", "coefficient", "coef", "point_estimate", "point")
+_LOWER_CANDIDATES = ("lower", "ci_lower", "lower_ci", "conf_low", "conf.low",
+                     "cband_lower", "lower_bound")
+_UPPER_CANDIDATES = ("upper", "ci_upper", "upper_ci", "conf_high", "conf.high",
+                     "cband_upper", "upper_bound")
+_SE_CANDIDATES = ("std_error", "std.error", "standard_error", "se", "stderr")
+
+
+def _match_col(columns, candidates: Sequence[str]) -> Optional[str]:
+    """Return the first column matching a candidate (exact, then substring)."""
+    lower = {str(c).lower(): c for c in columns}
+    for cand in candidates:                 # exact match wins
+        if cand in lower:
+            return lower[cand]
+    for cand in candidates:                 # then substring
+        for lc, orig in lower.items():
+            if cand in lc:
+                return orig
+    return None
+
+
+def _tidy_event_study(
+    event_study,
+    event_time_col,
+    estimate_col,
+    lower_col,
+    upper_col,
+    se_col,
+    ci_level: float,
+) -> pd.DataFrame:
+    """Coerce a DiD event-study aggregate into ``event_time/estimate/lower/upper``.
+
+    The output of :func:`peatfire.modeling.did.aggregate_att` (``kind="event"``)
+    differs by backend, so this normalises it: it flattens a MultiIndex column
+    header, exposes an event-time held in the index, auto-detects the estimate /
+    CI / SE columns (override via the ``*_col`` arguments), and -- if only a
+    standard error is present -- builds a Wald CI at ``ci_level``.
+    """
+    df = event_study.copy() if isinstance(event_study, pd.DataFrame) else pd.DataFrame(event_study)
+
+    # Flatten a MultiIndex column header (the `differences` aggregate uses one).
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ["_".join(str(p) for p in tup if str(p) != "").strip("_")
+                      for tup in df.columns]
+
+    # Event time often lives in the index (e.g. `relative_period`); expose it.
+    et = event_time_col or _match_col(df.columns, _EVENT_TIME_CANDIDATES)
+    if et is None:
+        df = df.reset_index()
+        et = event_time_col or _match_col(df.columns, _EVENT_TIME_CANDIDATES)
+
+    est = estimate_col or _match_col(df.columns, _ESTIMATE_CANDIDATES)
+    if et is None or est is None:
+        raise ValueError(
+            "could not locate the event-time and estimate columns in the "
+            f"event-study frame (columns: {list(df.columns)}). Pass "
+            "event_time_col=/estimate_col= (and lower_col=/upper_col= or se_col=) "
+            "explicitly."
+        )
+
+    lo = lower_col or _match_col(df.columns, _LOWER_CANDIDATES)
+    hi = upper_col or _match_col(df.columns, _UPPER_CANDIDATES)
+    out = pd.DataFrame({
+        "event_time": pd.to_numeric(df[et], errors="coerce"),
+        "estimate": pd.to_numeric(df[est], errors="coerce"),
+    })
+    if lo is not None and hi is not None:
+        out["lower"] = pd.to_numeric(df[lo], errors="coerce")
+        out["upper"] = pd.to_numeric(df[hi], errors="coerce")
+    else:
+        # No explicit band: build a Wald CI from the standard error.
+        se_name = se_col or _match_col(df.columns, _SE_CANDIDATES)
+        if se_name is None:
+            raise ValueError(
+                "event-study frame has neither lower/upper CI columns nor a "
+                f"standard-error column (columns: {list(df.columns)}). Pass "
+                "lower_col=/upper_col= or se_col= explicitly."
+            )
+        from statistics import NormalDist
+
+        z = NormalDist().inv_cdf(1 - (1 - ci_level) / 2)
+        se = pd.to_numeric(df[se_name], errors="coerce")
+        out["lower"] = out["estimate"] - z * se
+        out["upper"] = out["estimate"] + z * se
+
+    return out.dropna(subset=["event_time", "estimate"]).sort_values("event_time")
+
+
+def plot_event_study(
+    event_study,
+    event_time_col: Optional[str] = None,
+    estimate_col: Optional[str] = None,
+    lower_col: Optional[str] = None,
+    upper_col: Optional[str] = None,
+    se_col: Optional[str] = None,
+    ci_level: float = 0.95,
+    ylabel: str = "ATT on P(burn)",
+    treatment_label: str = "restoration",
+    ax: Optional[plt.Axes] = None,
+):
+    """Plot the staggered-DiD event study: burning vs time since restoration.
+
+    The one **temporal** diagnostic in this module, and the picture to eyeball
+    before trusting any headline ATT. It consumes the output of
+    :func:`peatfire.modeling.did.aggregate_att` with ``kind="event"`` -- the ATT
+    by event time (years since a site's restoration) -- and lays it out as
+    Callaway-Sant'Anna intends:
+
+    * **event time 0** is each treated site's restoration year (a dashed marker at
+      the ``-0.5`` onset boundary, since the period before treatment is the base);
+    * **pre-treatment points** (event time ``< 0``, drawn muted over a shaded band)
+      are the **parallel-trends test** -- they should straddle zero, i.e. treated
+      and control were on the same burning trajectory *before* restoration;
+    * **post-treatment points** (event time ``>= 0``, in the treated colour) are the
+      dynamic effect -- how the restoration effect on burning evolves after the
+      canal blocks go in.
+
+    Because the two DiD backends return differently-shaped aggregates, the frame is
+    normalised by :func:`_tidy_event_study`; override the column mapping with the
+    ``*_col`` arguments if auto-detection misses. When only a standard error is
+    present, a Wald CI at ``ci_level`` is drawn.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    tidy = _tidy_event_study(
+        event_study, event_time_col, estimate_col, lower_col, upper_col, se_col, ci_level
+    )
+    if tidy.empty:
+        fig, ax = (ax.figure, ax) if ax is not None else plt.subplots()
+        ax.text(0.5, 0.5, "no event-study estimates", ha="center", va="center")
+        return fig
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    pre = tidy[tidy["event_time"] < 0]
+    post = tidy[tidy["event_time"] >= 0]
+
+    # References: no-effect line, treatment onset, and the pre-period test window.
+    ax.axhline(0.0, color="0.5", lw=1.0, ls="--", zorder=1)
+    onset = -0.5   # boundary between the pre base period (-1) and event time 0
+    ax.axvline(onset, color="0.4", lw=1.0, ls=":", zorder=1)
+    if not pre.empty:
+        ax.axvspan(tidy["event_time"].min() - 0.5, onset,
+                   color="0.85", alpha=0.35, zorder=0)
+
+    # Faint path through every point, then coloured points + CIs per period.
+    ax.plot(tidy["event_time"], tidy["estimate"], color="0.6", lw=0.8, zorder=2)
+    for grp, color, label in (
+        (pre, CONTROL_COLOR, "pre (parallel-trends check)"),
+        (post, TREATED_COLOR, "post (dynamic ATT)"),
+    ):
+        if grp.empty:
+            continue
+        ax.errorbar(
+            grp["event_time"], grp["estimate"],
+            yerr=[grp["estimate"] - grp["lower"], grp["upper"] - grp["estimate"]],
+            fmt="o", color=color, ecolor=color, elinewidth=1.2, capsize=3,
+            markersize=5, label=label, zorder=3,
+        )
+
+    ax.annotate(
+        treatment_label, xy=(onset, 1.0), xycoords=("data", "axes fraction"),
+        xytext=(3, -10), textcoords="offset points", va="top", ha="left",
+        fontsize=9, color="0.4",
+    )
+    ax.set_xticks(sorted(tidy["event_time"].unique()))
+    ax.set_xlabel("event time (years since restoration)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(
+        "Event study: burning vs time since restoration\n"
+        f"({int(round(ci_level * 100))}% CIs; pre-period points test parallel trends)"
+    )
     ax.legend(loc="best")
     return fig

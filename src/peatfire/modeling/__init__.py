@@ -71,6 +71,7 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_covariate_maps,
     plot_covariate_pairs,
     plot_covariate_space,
+    plot_event_study,
     plot_matched_pairs_covariate,
     plot_matched_pairs_geographic,
 )
@@ -121,6 +122,7 @@ __all__ = [
     "plot_covariate_maps",
     "plot_covariate_pairs",
     "plot_covariate_space",
+    "plot_event_study",
     "plot_matched_pairs_covariate",
     "plot_matched_pairs_geographic",
     "fit_logit_clustered",
