@@ -553,12 +553,13 @@ def match_controls(
         used: set[int] = set()  # control positions already claimed (no-replace)
         for i in range(len(t)):
             chosen = []  # (control_position, distance) picked for this treated
+            
             for j in range(idx.shape[1]):
                 cpos, d = int(idx[i, j]), float(dist[i, j])
                 if d > caliper:
                     break  # neighbours are distance-sorted -> the rest are too far
                 if np.linalg.norm(c.iloc[cpos] - t.iloc[i]) > max_dist_m:
-                    break # this candidate control pixel is too physically far from the treated pixel
+                    continue # this candidate control pixel is too physically far from the treated pixel
                 if not replace and cpos in used:
                     continue
                 chosen.append((cpos, d))
