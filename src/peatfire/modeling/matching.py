@@ -431,8 +431,9 @@ def match_controls(
     replace: bool = False,
     restoration_yr_col: str = "End_Yr",
     site_col: str = "Proj_Name",
+    max_dist_m: Optional[float] = None
 ) -> gpd.GeoDataFrame:
-    """Stage 5. Pair each treated pixel with its nearest control(s).
+    """Stage 5. Pair each treated pixel with its nearest control(s) that are physically located within max_dist_m.
 
     Why each step is here:
 
@@ -556,6 +557,8 @@ def match_controls(
                 cpos, d = int(idx[i, j]), float(dist[i, j])
                 if d > caliper:
                     break  # neighbours are distance-sorted -> the rest are too far
+                if np.linalg.norm(c.iloc[cpos] - t.iloc[i]) > max_dist_m:
+                    break # this candidate control pixel is too physically far from the treated pixel
                 if not replace and cpos in used:
                     continue
                 chosen.append((cpos, d))
