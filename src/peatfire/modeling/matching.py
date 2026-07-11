@@ -42,7 +42,7 @@ from .frame import (  # noqa: F401
     load_completed_restoration_sites_in_analysis_crs,
 )
 
-from sklearn.neighbors import NearestNeighbors
+from scipy.spatial import cKDTree
 # A pixel this close to a restoration site may be partially rewetted by it
 # (spillover) -- exclude it from the control pool. Tune per Stage 2.
 DEFAULT_SPILLOVER_M = 1000.0
@@ -433,7 +433,8 @@ def match_controls(
     site_col: str = "Proj_Name",
     max_dist_m: Optional[float] = None
 ) -> gpd.GeoDataFrame:
-    """Stage 5. Pair each treated pixel with its nearest control(s) that are physically located within max_dist_m.
+    """Stage 5. Pair each treated pixel with its nearest control(s), optionally
+    only among controls physically within ``max_dist_m`` metres.
 
     Why each step is here:
 
@@ -453,6 +454,16 @@ def match_controls(
     * **Caliper.** A distance ceiling (in whitened / SD units): a treated pixel
       with no control inside the caliper is dropped rather than matched to a poor
       twin. How many get dropped is a design diagnostic -- it's printed.
+    * **Geographic caliper (``max_dist_m``).** A *separate* ceiling, in **metres**
+      (not SD units), on how physically far a control may be from its treated
+      pixel to be an eligible candidate -- the spatial restriction from Castro et
+      al. (2026). We apply it **geography-first**: for each treated pixel we take
+      only the controls within ``max_dist_m`` (a KD-tree radius query on the
+      EPSG:5070 ``x``/``y`` coordinates), *then* rank those by covariate distance.
+      Doing eligibility before the covariate ranking -- rather than post-filtering
+      a global nearest-neighbour search -- means a geographically close, decent
+      covariate match is never missed just because it fell outside a fixed
+      neighbour budget. ``None`` (default) imposes no spatial restriction.
     * **Replacement.** ``replace=False`` (default) gives disjoint controls (each
       control used at most once); ``replace=True`` lets a good control serve
       several treated pixels (better balance, but reused controls -- the checker
@@ -533,32 +544,55 @@ def match_controls(
     groups = cross_w.groupby(group_keys) if group_keys else [((), cross_w)]
 
     pairs = []  # collect matched treated + control rows
-    n_dropped = 0
+    n_dropped_dist = 0     # treated dropped: no control within max_dist_m
+    n_dropped_caliper = 0  # treated dropped: none within the covariate caliper
     pair_counter = 0  # unique id per matched treated pixel (the pair/stratum)
     for _, g in groups:
         t = g[g["_grp_treated"] == 1]
         c = g[g["_grp_treated"] == 0].reset_index(drop=True)
         if len(t) == 0 or len(c) == 0:
-            n_dropped += len(t)   # treated with no same-class controls
+            n_dropped_caliper += len(t)  # treated with no same-class controls
             continue
 
-        # Ask for enough neighbours that, matching without replacement, we can
-        # still fill k per treated pixel even as earlier controls get claimed.
-        n_ask = min(len(c), k if replace else k * len(t))
-        nn = NearestNeighbors(n_neighbors=n_ask)
-        nn.fit(c[zcols].to_numpy())
-        dist, idx = nn.kneighbors(t[zcols].to_numpy())  # (n_t, n_ask) each
+        # Whitened covariates (for the Mahalanobis distance) and physical
+        # coordinates (metres, for the geographic caliper), as positional arrays
+        # aligned to `t` / `c`.
+        c_z = c[zcols].to_numpy()
+        c_xy = c[["x", "y"]].to_numpy()
+        t_z = t[zcols].to_numpy()
+        t_xy = t[["x", "y"]].to_numpy()
 
-        # --- 5. caliper + assemble pairs ---------------------------------
+        # --- 5a. Geography FIRST: eligible controls per treated pixel --------
+        # For each treated pixel, restrict to controls within `max_dist_m` metres
+        # BEFORE ranking on covariates, so a nearby, decent covariate match is
+        # never missed for falling outside a fixed neighbour budget. `None` ->
+        # every control is eligible (no spatial restriction).
+        if max_dist_m is not None:
+            tree = cKDTree(c_xy)
+            eligible_per_t = tree.query_ball_point(t_xy, r=max_dist_m)
+        else:
+            all_pos = np.arange(len(c))
+            eligible_per_t = [all_pos] * len(t)
+
+        # --- 5b. Covariate caliper + assemble pairs -------------------------
         used: set[int] = set()  # control positions already claimed (no-replace)
         for i in range(len(t)):
+            eligible = np.asarray(eligible_per_t[i], dtype=int)
+            if eligible.size == 0:
+                n_dropped_dist += 1  # no control within max_dist_m of this pixel
+                continue
+
+            # Covariates SECOND: Mahalanobis (whitened Euclidean) distance to the
+            # eligible controls only, ordered nearest-first so the caliper `break`
+            # below stays valid.
+            d_elig = np.linalg.norm(c_z[eligible] - t_z[i], axis=1)
+            order = np.argsort(d_elig)
+
             chosen = []  # (control_position, distance) picked for this treated
-            for j in range(idx.shape[1]):
-                cpos, d = int(idx[i, j]), float(dist[i, j])
+            for j in order:
+                cpos, d = int(eligible[j]), float(d_elig[j])
                 if d > caliper:
-                    break  # neighbours are distance-sorted -> the rest are too far
-                if np.linalg.norm(c.iloc[cpos] - t.iloc[i]) > max_dist_m:
-                    break # this candidate control pixel is too physically far from the treated pixel
+                    break  # covariate-sorted -> the rest are too far, stop
                 if not replace and cpos in used:
                     continue
                 chosen.append((cpos, d))
@@ -567,7 +601,7 @@ def match_controls(
                 if len(chosen) >= k:
                     break
             if not chosen:
-                n_dropped += 1  # no control within the caliper -> drop this treated
+                n_dropped_caliper += 1  # eligible by distance, none within caliper
                 continue
 
             pid = pair_counter
@@ -590,10 +624,13 @@ def match_controls(
 
     n_treated = int((matched[treated_col] == 1).sum())
     n_control = int((matched[treated_col] == 0).sum())
+    n_dropped = n_dropped_dist + n_dropped_caliper
     print(
         f"[match] {n_treated} treated matched to {n_control} controls "
-        f"(k={k}, caliper={caliper}, replace={replace}); "
-        f"dropped {n_dropped} treated pixels with no control in caliper"
+        f"(k={k}, caliper={caliper}, replace={replace}, max_dist_m={max_dist_m}); "
+        f"dropped {n_dropped} treated pixels "
+        f"({n_dropped_dist} with no control within max_dist_m, "
+        f"{n_dropped_caliper} with none inside the covariate caliper)"
     )
     return matched
 
