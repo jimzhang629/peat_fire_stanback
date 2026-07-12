@@ -421,6 +421,184 @@ def attach_covariates(
 
     return points
 
+def add_matching_scores(
+    pixels: gpd.GeoDataFrame,
+    continuous: Sequence[str],
+    categorical: Sequence[str] = (),
+    response: str = "burned",
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    propensity: bool = True,
+    prognostic: bool = True,
+    pscore_col: str = "pscore",
+    phat_col: str = "phat",
+    C: float = 1.0,
+) -> gpd.GeoDataFrame:
+    """Attach a **propensity** and/or **prognostic** score to every pixel.
+
+    The static match in :func:`match_controls` compares treated and control
+    pixels on the *raw covariate vector* (Mahalanobis). This function instead
+    collapses that vector down to the two scalars that summarise the two channels
+    through which a covariate can bias the comparison, exactly the Castro et al.
+    (2026) match inputs:
+
+    * **Propensity score** ``e(X) = P(treated | X)`` -- how *treatment-like* a
+      pixel looks. Fitted by a (regularised) logistic regression of restoration-site
+      membership on the covariates. Matching on it balances the covariates that
+      drive *selection into treatment*.
+    * **Prognostic score** ``Psi(X) = E[burn | X, untreated]`` -- a pixel's
+      *baseline fire risk* absent treatment. Fitted on **control pixels only** (a
+      logistic of "did this pixel burn in an untreated year" on the covariates),
+      then predicted for everyone. Matching on it balances the covariates that
+      drive the *outcome*.
+
+    Matching on **both** (pass the two columns as ``continuous`` to
+    :func:`match_controls`, i.e. ``continuous=[pscore_col, phat_col]``) is the
+    doubly-robust / bijective match: comparable if *either* score model is right,
+    the same logic as ``est_method="dr"`` in :func:`peatfire.modeling.estimate_att`.
+
+    The scores are constant per physical pixel, so they are computed on the
+    **unique** ``(x, y)`` pixels (treatment GROUP = restoration-site membership,
+    matching :func:`match_controls`) and broadcast back across the pixel-years.
+
+    Parameters
+    ----------
+    pixels : GeoDataFrame
+        Pixel or pixel-year table with ``x``/``y`` and the ``continuous`` (and any
+        ``categorical``) covariates already attached (see
+        :func:`attach_covariates`). For the **prognostic** score it must also carry
+        the per-year ``response`` (0/1 burn) and the per-year ``treated_col`` flag
+        so untreated pixel-years -- the ``Y(0)`` observations -- can be identified.
+    continuous, categorical : sequence of str
+        Covariates fed to the score models: ``continuous`` are standardised;
+        ``categorical`` are one-hot encoded. These are the *inputs* to the scores,
+        not the match axes -- the match axes become ``pscore_col``/``phat_col``.
+    response : str, default ``"burned"``
+        Per-year 0/1 fire column used to fit the prognostic score. If absent, the
+        prognostic score is skipped with a warning (propensity still runs).
+    treated_col : str, default ``"treated"``
+        Per-year treatment flag (1 once a pixel's site is restored). Untreated
+        rows (``== 0``) are the baseline-fire observations for the prognostic fit.
+    restoration_yr_col : str, default ``"End_Yr"``
+        Restoration year; its non-null-ness defines the treated *group* for the
+        propensity target (a treated pixel is "treated" for scoring in every year,
+        even pre-restoration, exactly as in :func:`match_controls`).
+    propensity, prognostic : bool
+        Toggle each score independently.
+    pscore_col, phat_col : str
+        Output column names.
+    C : float, default 1.0
+        Inverse L2-regularisation strength for both logistic fits (sklearn
+        convention); the penalty keeps the rare-fire prognostic model from running
+        off to infinity under (quasi-)separation.
+
+    Returns
+    -------
+    GeoDataFrame
+        ``pixels`` with ``pscore_col`` and/or ``phat_col`` added (NaN on any pixel
+        whose covariates were incomplete -- :func:`match_controls` drops those).
+
+    Notes
+    -----
+    No leakage into the treatment effect: a treated pixel's prognostic score is
+    predicted purely from its covariates, never from its own post-restoration
+    burns. The baseline outcome is deliberately the *untreated* years only.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    df = pixels.copy()
+    if "x" not in df.columns or "y" not in df.columns:
+        raise ValueError("pixels must carry 'x' and 'y' pixel coordinates.")
+
+    cont = list(continuous)
+    cat = list(categorical)
+
+    # --- one row per physical pixel; treatment GROUP = restoration-site membership
+    unique = df.drop_duplicates(subset=["x", "y"]).reset_index(drop=True)
+    if restoration_yr_col in unique.columns:
+        grp = unique[restoration_yr_col].notna().to_numpy()
+    else:
+        grp = (unique[treated_col] == 1).to_numpy()
+
+    # --- keep only pixels with complete covariates for the score models ---------
+    ok = unique[cont + cat].notna().all(axis=1).to_numpy() if (cont or cat) else np.ones(len(unique), bool)
+    use = unique.loc[ok].reset_index(drop=True)
+    grp_use = grp[ok]
+
+    # --- design matrix: standardised continuous + one-hot categorical -----------
+    Xc = (
+        StandardScaler().fit_transform(use[cont].to_numpy(dtype=float))
+        if cont
+        else np.empty((len(use), 0))
+    )
+    if cat:
+        Xd = pd.get_dummies(use[cat].astype("category"), drop_first=True)
+        X = np.hstack([Xc, Xd.to_numpy(dtype=float)])
+    else:
+        X = Xc
+
+    # --- propensity: P(treated group | covariates) ------------------------------
+    if propensity:
+        if len(np.unique(grp_use)) < 2:
+            raise ValueError(
+                "cannot fit the propensity score: only one treatment class among "
+                "pixels with complete covariates (need both treated and control)."
+            )
+        clf = LogisticRegression(max_iter=1000, C=C)
+        clf.fit(X, grp_use.astype(int))
+        use[pscore_col] = clf.predict_proba(X)[:, 1]
+
+    # --- prognostic: E[burn | covariates, untreated], fit on controls only ------
+    if prognostic:
+        if response not in df.columns:
+            warnings.warn(
+                f"prognostic score skipped: no {response!r} column in pixels -- "
+                "sample the fire response onto the panel first (see build_frame / "
+                "the DiD notebook cell) to enable it.",
+                stacklevel=2,
+            )
+        else:
+            # Baseline (Y(0)) = did this pixel burn in an UNTREATED year? -- all
+            # years for controls, pre-restoration years for treated pixels (the
+            # per-year `treated_col` is already 0 in those rows).
+            untreated = df.loc[df[treated_col] == 0, ["x", "y", response]]
+            base = (
+                untreated.groupby(["x", "y"])[response]
+                .max()
+                .rename("_baseline")
+                .reset_index()
+            )
+            use = use.merge(base, on=["x", "y"], how="left")  # left-merge preserves X order
+            train = (grp_use == 0) & use["_baseline"].notna().to_numpy()
+            yb = use.loc[train, "_baseline"].astype(int).to_numpy()
+            if int(train.sum()) < 2 or len(np.unique(yb)) < 2:
+                rate = (
+                    float(np.nanmean(use["_baseline"]))
+                    if use["_baseline"].notna().any()
+                    else 0.0
+                )
+                use[phat_col] = rate
+                warnings.warn(
+                    "prognostic model fell back to the constant base rate "
+                    f"({rate:.4g}): too few control pixels with a defined baseline, "
+                    "or no baseline-fire variation to fit on.",
+                    stacklevel=2,
+                )
+            else:
+                pmodel = LogisticRegression(max_iter=1000, C=C)
+                pmodel.fit(X[train], yb)
+                use[phat_col] = pmodel.predict_proba(X)[:, 1]
+            use = use.drop(columns="_baseline")
+
+    # --- broadcast the per-pixel scores back across the pixel-years -------------
+    score_cols = [c for c in (pscore_col, phat_col) if c in use.columns]
+    out = df.merge(use[["x", "y", *score_cols]], on=["x", "y"], how="left")
+    if isinstance(df, gpd.GeoDataFrame):
+        out = gpd.GeoDataFrame(out, geometry=df.geometry.name, crs=df.crs)
+    return out
+
+
 def match_controls(
     pixels: gpd.GeoDataFrame,
     continuous: Sequence[str],
@@ -431,7 +609,8 @@ def match_controls(
     replace: bool = False,
     restoration_yr_col: str = "End_Yr",
     site_col: str = "Proj_Name",
-    max_dist_m: Optional[float] = None
+    max_dist_m: Optional[float] = None,
+    carry: Sequence[str] = (),
 ) -> gpd.GeoDataFrame:
     """Stage 5. Pair each treated pixel with its nearest control(s), optionally
     only among controls physically within ``max_dist_m`` metres.
@@ -468,6 +647,14 @@ def match_controls(
       control used at most once); ``replace=True`` lets a good control serve
       several treated pixels (better balance, but reused controls -- the checker
       warns, not errors).
+    * **Carry-through columns (``carry``).** Extra columns to copy onto every
+      matched row *besides* the match axes. This matters when you match on
+      **derived** axes -- e.g. the propensity/prognostic scores from
+      :func:`add_matching_scores` (``continuous=["pscore", "phat"]``): the raw
+      covariates (elevation, histosol %, ...) are then *not* match axes, so pass
+      them here to keep them on the output for the raw-covariate love plot
+      (:func:`balance_table`) and for ``build_frame`` downstream. Ignored if a
+      named column is absent.
 
     Clustering key
     --------------
@@ -525,9 +712,11 @@ def match_controls(
     zcols = [f"_z{i}" for i in range(Xw.shape[1])]
 
     # Columns each output row keeps: coordinates, geometry, the covariates, the
-    # exact-match keys, and (when present) the restoration year for the panel/DiD.
-    extra = [c for c in (restoration_yr_col,) if c in cross_w.columns]
-    keep_cols = ["x", "y", "geometry", *cont, *list(categorical), *extra]
+    # exact-match keys, the restoration year for the panel/DiD (when present), and
+    # any caller-requested carry-through columns (e.g. the raw covariates behind a
+    # score-based match). Dedup while preserving order; keep only columns present.
+    extra = [c for c in (restoration_yr_col, *carry) if c in cross_w.columns]
+    keep_cols = list(dict.fromkeys(["x", "y", "geometry", *cont, *list(categorical), *extra]))
     have_site = site_col in cross_w.columns
 
     def _record(row, is_treated: int, site_id, pair_id: int, distance: float) -> dict:

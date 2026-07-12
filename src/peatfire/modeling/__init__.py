@@ -52,6 +52,7 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     avoided_area,
     build_panel,
     estimate_att,
+    restrict_panel_to_matched,
 )
 from .climate import (  # GHCN station points -> gridded climate covariates
     build_annual_climate,
@@ -77,6 +78,7 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_matched_pairs_geographic,
 )
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
+    add_matching_scores,
     assemble_units,
     attach_covariates,
     balance_table,
@@ -136,6 +138,8 @@ __all__ = [
     "avoided_area",
     "build_panel",
     "estimate_att",
+    "restrict_panel_to_matched",
+    "add_matching_scores",
     "assemble_units",
     "attach_covariates",
     "balance_table",
