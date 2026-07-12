@@ -290,9 +290,10 @@ def estimate_att(
         Doubly-robust (default, Castro's choice), inverse-probability weighting, or
         outcome regression only.
     cluster : str, optional
-        Entity-level column to cluster SEs on (Castro cluster at the village level;
-        here pass your ``site_id``/matching-stratum name). Defaults to the panel's
-        entity index.
+        Column to cluster SEs on (Castro cluster at the village level; here pass
+        your ``site_id``/matching-stratum name). Defaults to the panel's entity
+        index. Only the ``rpy2`` backend honours a non-entity cluster; the
+        ``differences`` backend always clusters at the entity level.
     backend : {"differences", "rpy2"}
         ``"differences"`` uses the pure-Python Callaway-Sant'Anna port;
         ``"rpy2"`` calls the reference R ``did::att_gt`` (what maps most directly
@@ -309,8 +310,19 @@ def estimate_att(
         # pip install differences
         from differences import ATTgt
 
-        att = ATTgt(data=panel, cohort_name=cohort_col)
+        # `differences` marks never-treated units with NaN in the cohort column,
+        # whereas our panel (and the R `did` backend) uses NEVER_TREATED == 0.
+        # Translate locally so we don't disturb the shared 0-convention.
+        panel = panel.copy()
+        panel[cohort_col] = panel[cohort_col].replace(NEVER_TREATED, np.nan)
+
+        att = ATTgt(data=panel, cohort_column=cohort_col)
         formula = response if not xformla else f"{response} ~ {xformla}"
+        # `differences` clusters influence functions at the entity level (the first
+        # index level) automatically, which is our documented `cluster` default.
+        # It has no working path for an *extra* non-entity cluster column in 0.3.0,
+        # so we do not forward one here; use the `rpy2` backend if you need to
+        # cluster on a coarser stratum than the entity.
         att.fit(formula=formula, est_method=est_method)
         return att
 
