@@ -48,6 +48,7 @@ convention ``models.py`` uses for ``statsmodels``/``pymer4``.
 
 from __future__ import annotations
 
+import warnings
 from typing import Iterable, Mapping, Optional, Sequence, Union
 
 import numpy as np
@@ -57,6 +58,90 @@ import pandas as pd
 # the treatment "group" as the year of canal-block construction. We mirror the
 # never-treated sentinel the Callaway-Sant'Anna estimators expect.
 NEVER_TREATED = 0
+
+
+# ---------------------------------------------------------------------------
+# 0. Match first: restrict the panel to the matched pixels (Castro's two-step)
+# ---------------------------------------------------------------------------
+def restrict_panel_to_matched(
+    panel: pd.DataFrame,
+    matched: pd.DataFrame,
+    coord_cols: Sequence[str] = ("x", "y"),
+    site_col: str = "site_id",
+    pair_col: str = "pair_id",
+) -> pd.DataFrame:
+    """Filter a pixel-year panel down to the pixels that survived matching.
+
+    This is the **"match first, then DiD"** join that wires
+    :func:`peatfire.modeling.match_controls` into this pipeline. Run it *before*
+    :func:`attach_cohort` / :func:`build_panel` so the Callaway-Sant'Anna ATT is
+    identified against the **matched** controls only -- each treated pixel plus its
+    caliper-matched twin(s) -- rather than the full unrestored candidate pool. The
+    matched set (from ``match_controls`` / :func:`assemble_units`) selects *which*
+    control pixels enter; the DiD then differences over time within that set, so
+    the design gets both the match's covariate overlap and the DiD's removal of
+    time-invariant confounders.
+
+    Parameters
+    ----------
+    panel : DataFrame
+        Pixel-year panel (e.g. the ``pixels_with_covariates`` the notebook samples
+        the response onto): one row per ``(x, y, year)`` carrying the response, the
+        per-year ``treated`` flag, and the restoration year for :func:`attach_cohort`.
+    matched : DataFrame
+        Output of :func:`match_controls` / :func:`assemble_units` -- one row per
+        matched pixel, carrying ``coord_cols`` and the ``site_col`` (restoration
+        site, the cluster key) and ``pair_col`` (the finer matched stratum).
+    coord_cols : sequence of str, default ``("x", "y")``
+        The pixel-coordinate keys shared by both tables (same EPSG:5070 grid).
+    site_col, pair_col : str
+        Columns copied from ``matched`` onto the kept panel rows so the DiD can
+        cluster on the restoration site (``estimate_att(cluster=site_col)`` via the
+        ``rpy2`` backend) and, if wanted, inspect the matched pair.
+
+    Returns
+    -------
+    DataFrame
+        The subset of ``panel`` whose pixels are in ``matched``, with ``site_col``
+        (and ``pair_col`` when present) attached from the match. Feed straight to
+        :func:`attach_cohort`.
+
+    Notes
+    -----
+    With ``replace=True`` matching a control pixel can serve several treated pixels
+    and so appear under more than one ``site``/``pair``; a DiD entity must be one
+    pixel, so the first is kept (with a warning). Match without replacement
+    (the ``match_controls`` default) to avoid the ambiguity.
+    """
+    xy = list(coord_cols)
+    missing = [c for c in xy if c not in matched.columns]
+    if missing:
+        raise ValueError(f"`matched` is missing coordinate column(s) {missing}.")
+    missing_panel = [c for c in xy if c not in panel.columns]
+    if missing_panel:
+        raise ValueError(f"`panel` is missing coordinate column(s) {missing_panel}.")
+
+    carry = [c for c in (site_col, pair_col) if c in matched.columns]
+    if matched.duplicated(subset=xy).any():
+        n = int(matched.duplicated(subset=xy).sum())
+        warnings.warn(
+            f"{n} matched pixel(s) appear under more than one treated partner "
+            "(matching with replacement); keeping the first "
+            f"{'/'.join(carry) or 'match'} for each in the DiD panel.",
+            stacklevel=2,
+        )
+    lookup = matched[xy + carry].drop_duplicates(subset=xy)
+
+    # Let the match's site/pair win cleanly if the panel already carried them.
+    drop = [c for c in carry if c in panel.columns]
+    base = panel.drop(columns=drop) if drop else panel
+    out = base.merge(lookup, on=xy, how="inner")
+    if out.empty:
+        raise ValueError(
+            "no panel rows survived the match restriction -- do `panel` and "
+            f"`matched` share the same {xy} grid coordinates (same res_m/CRS)?"
+        )
+    return out.reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
