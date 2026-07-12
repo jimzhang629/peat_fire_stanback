@@ -79,6 +79,9 @@ from .plotting import (  # step-by-step data-inspection diagnostics
 )
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
     add_matching_scores,
+    add_prognostic_score_series,
+    add_propensity_score_series,
+    match_controls_event_time,
     assemble_units,
     attach_covariates,
     balance_table,
@@ -140,6 +143,9 @@ __all__ = [
     "estimate_att",
     "restrict_panel_to_matched",
     "add_matching_scores",
+    "add_prognostic_score_series",
+    "add_propensity_score_series",
+    "match_controls_event_time",
     "assemble_units",
     "attach_covariates",
     "balance_table",

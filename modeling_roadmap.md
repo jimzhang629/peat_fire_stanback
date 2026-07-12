@@ -194,7 +194,7 @@ What Castro et al. do, and how it maps onto our pipeline:
 |----------------------------------|--------------|
 | Treated = 250 m upstream semicircle of each canal block; control = rest of a 2 km buffer | treated = restoration polygons; control = matched unrestored peat (matching.py) |
 | Match 1:1, Mahalanobis, no replacement, **exact on subdistrict + peat depth**, |SMD| ≤ 0.2 | our Stage 5 matching (add exact-match keys; tighten caliper) |
-| Match on **propensity + prognostic scores** + pre-treatment fire history (t-1, t-2, 2015 drought) | `add_matching_scores` builds `pscore` + `phat` (prognostic from pre-treatment burn); match on them instead of raw covariates |
+| Match on **propensity + prognostic scores** + pre-treatment fire history (t-1, t-2, 2015 drought) | two options: `add_matching_scores` (collapsed scalar `pscore`+`phat`, simple) **or** the faithful series -- `add_prognostic_score_series` (per-year `phat_<yr>`), `add_propensity_score_series` (per-vintage `psm_<g>`), matched by `match_controls_event_time` on the event-time trajectory vector (fire lags + `phat_<t>` + `psm_<g>`) |
 | Outcome = binary fire, 50 m pixel-year (MODIS MCD64A1, ≤10% uncertainty) | `build_frame` pixel-year `burned` (swappable DV) |
 | Estimator = **Callaway & Sant'Anna (2021)** staggered DiD, **doubly robust**, `csdid` in Stata | `modeling/did.py` (`estimate_att`, `differences` pkg or R `did`) |
 | Outcome eq. (their Eq. 1): distances, climate, night-lights, **temporal lag** (fire t-1) + **spatial lag** (4 neighbours) | `add_fire_lags` builds both lags; pass as DiD covariates |

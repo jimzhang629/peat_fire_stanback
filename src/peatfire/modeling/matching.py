@@ -599,6 +599,402 @@ def add_matching_scores(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Per-year / per-vintage score series + event-time matching (faithful Castro)
+# ---------------------------------------------------------------------------
+def _design_matrix(use: pd.DataFrame, continuous: Sequence[str], categorical: Sequence[str]):
+    """Standardised continuous + one-hot categorical design matrix for the score fits.
+
+    Built once over *all* rows in ``use`` so the same scaling / dummy columns apply
+    when a model is trained on a subset (controls) and then predicted for everyone.
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    cont, cat = list(continuous), list(categorical)
+    Xc = (
+        StandardScaler().fit_transform(use[cont].to_numpy(dtype=float))
+        if cont
+        else np.empty((len(use), 0))
+    )
+    if cat:
+        Xd = pd.get_dummies(use[cat].astype("category"), drop_first=True)
+        return np.hstack([Xc, Xd.to_numpy(dtype=float)])
+    return Xc
+
+
+def _burned_wide(df: pd.DataFrame, response: str, year_col: str) -> pd.DataFrame:
+    """Pixel x year table of the (0/1) response, indexed by ``(x, y)``, int year cols.
+
+    The source both for per-year prognostic targets and for the pre-construction
+    fire-history lags in the event-time match.
+    """
+    bw = (
+        df.dropna(subset=[response])
+        .drop_duplicates(["x", "y", year_col])
+        .pivot(index=["x", "y"], columns=year_col, values=response)
+    )
+    bw.columns = [int(c) for c in bw.columns]
+    return bw
+
+
+def add_prognostic_score_series(
+    pixels: gpd.GeoDataFrame,
+    continuous: Sequence[str],
+    categorical: Sequence[str] = (),
+    response: str = "burned",
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    year_col: str = "year",
+    years: Optional[Sequence[int]] = None,
+    prefix: str = "phat_",
+    C: float = 1.0,
+) -> gpd.GeoDataFrame:
+    """Per-**year** prognostic fire-risk scores -- Castro's per-year prognostic model.
+
+    A *separate* logistic fire-risk model is fit for **each outcome year**, calibrated
+    **only on never-treated control pixels** (pixels whose ``restoration_yr_col`` is
+    NaN -- never restored), then predicted for *all* pixels. Because the fitted
+    coefficients differ year to year, the resulting ``phat_<year>`` columns are a
+    **year-indexed series**: they encode how baseline fire risk *shifts over time*
+    (much higher in dry El Nino / drought years), which a single collapsed prognostic
+    score cannot. This is the per-year series the event-time match consumes.
+
+    Unlike the scalar :func:`add_matching_scores`, this does **not** collapse the
+    outcome over years -- it is the faithful, time-resolved prognostic score.
+
+    Parameters
+    ----------
+    pixels : GeoDataFrame
+        Pixel-year panel with ``x``/``y``, the covariates, the per-year 0/1
+        ``response``, and ``year_col``.
+    continuous, categorical : sequence of str
+        Prognostic-model inputs: ``continuous`` standardised, ``categorical`` one-hot.
+    years : sequence of int, optional
+        Outcome years to fit. Defaults to every year with ``response`` coverage.
+    prefix : str
+        Output columns are ``f"{prefix}{year}"`` (default ``phat_2019`` ...).
+
+    Returns
+    -------
+    GeoDataFrame
+        ``pixels`` with one ``phat_<year>`` column per fitted year (broadcast across
+        the pixel-years). A year with no control-pixel fire variation falls back to
+        that year's base rate (with a warning).
+
+    Notes
+    -----
+    Trained on never-treated controls only (Castro: "control pixels that never had a
+    block"), so a treated pixel's prognostic score is a pure covariate prediction --
+    no leakage of its own post-restoration burns.
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    if response not in pixels.columns:
+        raise ValueError(
+            f"need the per-year {response!r} column to fit prognostic scores; sample "
+            "the fire response onto the panel first."
+        )
+    df = pixels.copy()
+    cont, cat = list(continuous), list(categorical)
+
+    unique = df.drop_duplicates(subset=["x", "y"]).reset_index(drop=True)
+    if restoration_yr_col in unique.columns:
+        never = unique[restoration_yr_col].isna().to_numpy()
+    else:  # fall back: a pixel that is control in every year is never-treated
+        m = df.groupby(["x", "y"])[treated_col].max()
+        never = unique.merge(m.rename("_m").reset_index(), on=["x", "y"], how="left")[
+            "_m"
+        ].fillna(0).eq(0).to_numpy()
+
+    ok = (
+        unique[cont + cat].notna().all(axis=1).to_numpy()
+        if (cont or cat)
+        else np.ones(len(unique), bool)
+    )
+    use = unique.loc[ok].reset_index(drop=True)
+    never_use = never[ok]
+    X = _design_matrix(use, cont, cat)
+
+    bw = _burned_wide(df, response, year_col)
+    if years is None:
+        years = sorted(bw.columns)
+
+    made: list[str] = []
+    for yr in (int(y) for y in years):
+        col = f"{prefix}{yr}"
+        if yr not in bw.columns:
+            warnings.warn(
+                f"prognostic: no {response!r} coverage for {yr}; column {col} skipped.",
+                stacklevel=2,
+            )
+            continue
+        tgt = use.merge(
+            bw[yr].rename("_t").reset_index(), on=["x", "y"], how="left"
+        )["_t"].to_numpy()
+        train = never_use & ~np.isnan(tgt)
+        yb = tgt[train]
+        if int(train.sum()) < 2 or len(np.unique(yb)) < 2:
+            rate = float(np.nanmean(tgt[never_use])) if never_use.any() else 0.0
+            use[col] = 0.0 if not np.isfinite(rate) else rate
+            warnings.warn(
+                f"prognostic {yr}: fell back to the base rate ({use[col].iloc[0]:.4g}); "
+                "too few never-treated controls or no fire variation that year.",
+                stacklevel=2,
+            )
+        else:
+            model = LogisticRegression(max_iter=1000, C=C).fit(X[train], yb.astype(int))
+            use[col] = model.predict_proba(X)[:, 1]
+        made.append(col)
+
+    out = df.merge(use[["x", "y", *made]], on=["x", "y"], how="left")
+    if isinstance(df, gpd.GeoDataFrame):
+        out = gpd.GeoDataFrame(out, geometry=df.geometry.name, crs=df.crs)
+    return out
+
+
+def add_propensity_score_series(
+    pixels: gpd.GeoDataFrame,
+    continuous: Sequence[str],
+    categorical: Sequence[str] = (),
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    prefix: str = "psm_",
+    C: float = 1.0,
+) -> gpd.GeoDataFrame:
+    """Per-**vintage** propensity scores -- Castro's per-construction-vintage psm.
+
+    One logistic is fit **per restoration cohort** ``g`` (the pixels restored in year
+    ``g`` as positives, the never-treated controls as negatives), then **projected
+    onto every pixel**. So the coefficients are cohort-specific -- they capture the
+    siting decisions of each construction vintage -- rather than varying by outcome
+    year. The result is a ``psm_<g>`` column per vintage; the event-time match for
+    cohort ``g`` uses ``psm_<g>``.
+
+    (Castro fit per *province x vintage*; NC has no province layer, so this is
+    per-vintage. Add a province/region stratum by fitting within its groups if one
+    ever exists.)
+
+    Parameters
+    ----------
+    pixels : GeoDataFrame
+        Pixel(-year) panel with ``x``/``y``, the covariates, and ``restoration_yr_col``
+        (the vintage; NaN for never-treated controls).
+    continuous, categorical : sequence of str
+        Propensity-model inputs: ``continuous`` standardised, ``categorical`` one-hot.
+    prefix : str
+        Output columns are ``f"{prefix}{g}"`` (default ``psm_2020`` ...).
+
+    Returns
+    -------
+    GeoDataFrame
+        ``pixels`` with one ``psm_<g>`` column per restoration vintage (projected onto
+        all pixels, broadcast across the pixel-years).
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    if restoration_yr_col not in pixels.columns:
+        raise ValueError(
+            f"need {restoration_yr_col!r} to define construction vintages."
+        )
+    df = pixels.copy()
+    cont, cat = list(continuous), list(categorical)
+
+    unique = df.drop_duplicates(subset=["x", "y"]).reset_index(drop=True)
+    ry = unique[restoration_yr_col].to_numpy(dtype=float)  # NaN == never-treated
+    never = np.isnan(ry)
+    ok = (
+        unique[cont + cat].notna().all(axis=1).to_numpy()
+        if (cont or cat)
+        else np.ones(len(unique), bool)
+    )
+    use = unique.loc[ok].reset_index(drop=True)
+    ry_use, never_use = ry[ok], never[ok]
+    X = _design_matrix(use, cont, cat)
+
+    vintages = sorted(int(g) for g in np.unique(ry_use[~never_use]))
+    if not vintages:
+        raise ValueError("no treated vintages found (all pixels never-treated).")
+
+    made: list[str] = []
+    for g in vintages:
+        col = f"{prefix}{g}"
+        # positives = vintage g; negatives = never-treated controls; other vintages
+        # are excluded from training but still get a projected score.
+        target = np.where(ry_use == g, 1.0, np.where(never_use, 0.0, np.nan))
+        train = ~np.isnan(target)
+        if len(np.unique(target[train])) < 2:
+            rate = float(np.mean(ry_use == g))
+            use[col] = rate
+            warnings.warn(
+                f"propensity vintage {g}: fell back to a constant ({rate:.4g}); "
+                "not enough contrast to fit.",
+                stacklevel=2,
+            )
+        else:
+            model = LogisticRegression(max_iter=1000, C=C).fit(
+                X[train], target[train].astype(int)
+            )
+            use[col] = model.predict_proba(X)[:, 1]
+        made.append(col)
+
+    out = df.merge(use[["x", "y", *made]], on=["x", "y"], how="left")
+    if isinstance(df, gpd.GeoDataFrame):
+        out = gpd.GeoDataFrame(out, geometry=df.geometry.name, crs=df.crs)
+    return out
+
+
+def match_controls_event_time(
+    pixels: gpd.GeoDataFrame,
+    response: str = "burned",
+    categorical: Sequence[str] = (),
+    restoration_yr_col: str = "End_Yr",
+    site_col: str = "Proj_Name",
+    year_col: str = "year",
+    treated_col: str = "treated",
+    phat_prefix: str = "phat_",
+    psm_prefix: str = "psm_",
+    pre_lags: Sequence[int] = (1, 2),
+    drought_year: Optional[int] = 2015,
+    post_horizon: Optional[int] = None,
+    caliper: float = 1.0,
+    k: int = 1,
+    max_dist_m: Optional[float] = None,
+    carry: Sequence[str] = (),
+    lag_prefix: str = "fire_y",
+) -> gpd.GeoDataFrame:
+    """Event-time 1:1 Mahalanobis match on Castro's **trajectory** vector (per vintage).
+
+    Faithful to Castro's matching: rather than a single collapsed score, a treated
+    pixel is matched to the control whose whole **time series of predicted risk**
+    looks like its own. Matching is done **per construction vintage** ``g`` (so the
+    event window aligns), one-to-one nearest-neighbour on Mahalanobis distance,
+    **without replacement** within a vintage, and (if ``categorical`` is given)
+    **exact-matched within each categorical class** (e.g. land cover) -- controls of
+    a different class are never eligible.
+
+    For each vintage ``g`` the matching vector is assembled, **event-time anchored**:
+
+    * **pre-construction fire history** -- actual burn at years ``g - pre_lags``
+      (e.g. ``g-1``, ``g-2``) and at ``drought_year`` (a fixed benchmark), each a
+      separate dimension;
+    * **per-year prognostic scores** ``phat_<t>`` for ``t = g .. last year`` (from
+      :func:`add_prognostic_score_series`) -- the forward risk trajectory;
+    * the **vintage propensity** ``psm_<g>`` (from :func:`add_propensity_score_series`).
+
+    Any component whose calendar year is not in the panel (e.g. a pre-2019 lag or the
+    2015 drought under 2019-2024 fire coverage) is simply omitted from that vintage's
+    vector. Requires the ``phat_<year>`` and ``psm_<g>`` columns to already be on
+    ``pixels`` -- run the two ``add_*_series`` builders first.
+
+    Notes
+    -----
+    * **No** exact-match on ``site_col`` (few NC sites; cluster SEs on it downstream
+      instead). Exact matching is applied only to ``categorical``.
+    * Controls are matched without replacement *within* a vintage, but the never-
+      treated pool is offered afresh to each vintage (per-vintage matching), so a
+      strong control may serve different vintages -- mirroring Castro.
+    * ``site_id`` on the output is the treated pixel's restoration site (controls
+      inherit it); ``pair_id`` is globally unique across vintages; ``cohort`` records
+      the vintage each pair was matched under.
+
+    Returns
+    -------
+    GeoDataFrame
+        Treated + matched control pixels across all vintages, with
+        ``[unit_id, site_id, pair_id, cohort, treated, match_distance, x, y,
+        geometry]`` plus ``restoration_yr_col`` and any ``carry`` columns -- ready for
+        :func:`assemble_units` / :func:`peatfire.modeling.restrict_panel_to_matched`.
+    """
+    if restoration_yr_col not in pixels.columns:
+        raise ValueError(f"need {restoration_yr_col!r} to define construction vintages.")
+
+    df = pixels.copy()
+    bw = _burned_wide(df, response, year_col)
+    avail = set(bw.columns)
+
+    unique = df.drop_duplicates(subset=["x", "y"]).reset_index(drop=True)
+    # attach burned-by-year columns (int-named) as the fire-history lag source
+    unique = unique.merge(bw.reset_index(), on=["x", "y"], how="left")
+
+    vintages = sorted(
+        int(g)
+        for g in unique.loc[unique[restoration_yr_col].notna(), restoration_yr_col].unique()
+    )
+    if not vintages:
+        raise ValueError("no treated vintages to match.")
+
+    id_cols = ["unit_id", "site_id", "pair_id", treated_col, "match_distance",
+               "x", "y", "geometry"]
+    keep_out = id_cols + [restoration_yr_col, "cohort"] + [c for c in carry]
+
+    parts: list[gpd.GeoDataFrame] = []
+    pair_offset = 0
+    for g in vintages:
+        cols: list[str] = []
+        # pre-construction fire-history lags + drought benchmark (actual burn)
+        lag_years = [g - int(l) for l in pre_lags]
+        if drought_year is not None:
+            lag_years.append(int(drought_year))
+        for ly in lag_years:
+            if ly in avail:
+                cn = f"{lag_prefix}{ly}"
+                if cn not in unique.columns:
+                    unique[cn] = unique[ly]
+                cols.append(cn)
+        # forward per-year prognostic trajectory (construction -> end)
+        post = [y for y in sorted(avail) if y >= g]
+        if post_horizon is not None:
+            post = post[:post_horizon]
+        cols += [f"{phat_prefix}{py}" for py in post if f"{phat_prefix}{py}" in unique.columns]
+        # vintage propensity
+        if f"{psm_prefix}{g}" in unique.columns:
+            cols.append(f"{psm_prefix}{g}")
+
+        cols = list(dict.fromkeys(cols))
+        if not cols:
+            warnings.warn(
+                f"cohort {g}: no event-time match variables available "
+                "(missing phat_/psm_ columns and no in-panel fire lags); skipped.",
+                stacklevel=2,
+            )
+            continue
+
+        # this vintage's treated pixels + the never-treated control pool
+        sub = unique[
+            (unique[restoration_yr_col] == g) | (unique[restoration_yr_col].isna())
+        ].copy()
+
+        m = match_controls(
+            sub,
+            continuous=cols,
+            categorical=categorical,        # exact-match on land cover etc.
+            caliper=caliper,
+            k=k,
+            replace=False,
+            max_dist_m=max_dist_m,
+            restoration_yr_col=restoration_yr_col,
+            site_col=site_col,
+            carry=carry,
+        )
+        if len(m) == 0:
+            continue
+        m["cohort"] = g
+        m["pair_id"] = m["pair_id"] + pair_offset
+        pair_offset = int(m["pair_id"].max()) + 1
+        parts.append(m[[c for c in keep_out if c in m.columns]])
+
+    if not parts:
+        raise ValueError(
+            "no vintage produced matches -- check that add_prognostic_score_series / "
+            "add_propensity_score_series were run and that fire coverage overlaps the "
+            "event windows."
+        )
+    matched = pd.concat(parts, ignore_index=True)
+    matched = gpd.GeoDataFrame(matched, geometry="geometry", crs=parts[0].crs)
+    matched["unit_id"] = np.arange(len(matched))
+    return matched
+
+
 def match_controls(
     pixels: gpd.GeoDataFrame,
     continuous: Sequence[str],
