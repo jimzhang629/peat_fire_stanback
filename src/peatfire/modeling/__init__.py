@@ -76,6 +76,9 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_event_study,
     plot_matched_pairs_covariate,
     plot_matched_pairs_geographic,
+    plot_prognostic_trajectory,
+    plot_score_map,
+    plot_score_overlap,
 )
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
     add_matching_scores,
@@ -132,6 +135,9 @@ __all__ = [
     "plot_event_study",
     "plot_matched_pairs_covariate",
     "plot_matched_pairs_geographic",
+    "plot_prognostic_trajectory",
+    "plot_score_map",
+    "plot_score_overlap",
     "fit_logit_clustered",
     "fit_mixed_logit",
     "odds_ratios",

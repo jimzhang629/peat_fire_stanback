@@ -27,6 +27,14 @@ The functions, in pipeline order:
 * :func:`plot_candidate_control_pixels` -- the full control candidate pool drawn
   over NC, with the subset actually chosen as controls highlighted on top, so you
   can see which candidates the match drew on and how they sit against the pool.
+* :func:`plot_score_map` -- matched pixels on the map coloured by a propensity /
+  prognostic score, pairs connected: same colour at both ends of a segment = a
+  close score match. The score-based sibling of ``plot_matched_pairs_geographic``.
+* :func:`plot_score_overlap` -- treated-vs-control histogram of a score, the
+  common-support / positivity check that says whether a match is even feasible.
+* :func:`plot_prognostic_trajectory` -- the per-year prognostic risk over time
+  (treated vs control), showing the dry/El Nino risk spikes the *per-year*
+  prognostic model captures and a single collapsed score cannot.
 * :func:`plot_event_study` -- the one *temporal* diagnostic: the staggered-DiD ATT
   by time since restoration (event time), pre-period points shaded as the
   parallel-trends check. Consumes ``did.aggregate_att(..., kind="event")``.
@@ -547,6 +555,232 @@ def plot_candidate_control_pixels(
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_title("Candidate pool and selected controls across NC")
+    ax.legend(loc="best")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 3b. Score diagnostics (propensity / prognostic)
+# ---------------------------------------------------------------------------
+def plot_score_map(
+    matched: gpd.GeoDataFrame,
+    score_col: str,
+    scores: Optional[gpd.GeoDataFrame] = None,
+    aoi: Optional[gpd.GeoDataFrame] = None,
+    treated_col: str = "treated",
+    pair_col: str = "pair_id",
+    aoi_context: Optional[gpd.GeoDataFrame] = None,
+    cmap: str = "viridis",
+    max_pairs: int = 2000,
+    ax: Optional[plt.Axes] = None,
+):
+    """Map each matched pixel coloured by a **score**, with matched pairs connected.
+
+    The score-based companion to :func:`plot_matched_pairs_geographic`: instead of
+    plain treated/control markers, every pixel is filled by its propensity or
+    prognostic score (``score_col`` -- e.g. ``"pscore"``, ``"phat"``, a per-vintage
+    ``"psm_2020"`` or a per-year ``"phat_2021"``), and each treated pixel is joined
+    to its matched control by a thin segment. A good score match shows the two ends
+    of every segment in nearly the **same colour**; a segment whose ends differ in
+    colour is a pixel matched to a control of unlike predicted risk. Treated pixels
+    are drawn as squares (black edge), controls as circles, so shape reads treatment
+    and colour reads the score.
+
+    ``score_col`` is looked up on ``matched`` if present; otherwise pass ``scores``
+    (any per-pixel frame with ``x``/``y`` and ``score_col`` -- e.g. the scored panel
+    from :func:`add_prognostic_score_series`), and it is joined on ``(x, y)``. This
+    matters for the event-time match, whose output carries pixel ids but not the
+    (per-cohort, ragged) score columns.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    m = matched.to_crs(ANALYSIS_CRS).copy()
+    if score_col not in m.columns:
+        if scores is None:
+            raise ValueError(
+                f"{score_col!r} not on `matched`; pass scores=<per-pixel frame with "
+                f"x, y, {score_col!r}> (e.g. the scored panel) to look it up."
+            )
+        lut = scores.drop_duplicates(subset=["x", "y"])[["x", "y", score_col]]
+        m = m.merge(lut, on=["x", "y"], how="left")
+
+    t = m[m[treated_col] == 1]
+    c = m[m[treated_col] == 0]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8.5, 7))
+    else:
+        fig = ax.figure
+
+    if aoi is not None:
+        aoi.to_crs(ANALYSIS_CRS).dissolve().boundary.plot(
+            ax=ax, color="0.6", linewidth=0.6, alpha=0.6, zorder=1
+        )
+    if aoi_context is not None:
+        aoi_context.to_crs(ANALYSIS_CRS).boundary.plot(
+            ax=ax, color="0.4", linewidth=0.8, zorder=1
+        )
+
+    # connect each treated pixel to its matched control(s)
+    tp = t.set_index(pair_col)
+    drawn = 0
+    for pid, crow in c.set_index(pair_col).iterrows():
+        if pid not in tp.index:
+            continue
+        trow = tp.loc[pid]
+        tgeom = trow.geometry.iloc[0] if hasattr(trow.geometry, "iloc") else trow.geometry
+        ax.plot([tgeom.x, crow.geometry.x], [tgeom.y, crow.geometry.y],
+                color="0.75", lw=0.4, zorder=2)
+        drawn += 1
+        if drawn >= max_pairs:
+            break
+
+    # shared colour scale across treated + control so colours are comparable
+    vals = m[score_col].to_numpy(dtype="float64")
+    finite = vals[np.isfinite(vals)]
+    vmin, vmax = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
+    ax.scatter(c.geometry.x, c.geometry.y, c=c[score_col], cmap=cmap, vmin=vmin,
+               vmax=vmax, s=22, marker="o", edgecolor="0.5", linewidths=0.4,
+               label="control", zorder=3)
+    sc = ax.scatter(t.geometry.x, t.geometry.y, c=t[score_col], cmap=cmap, vmin=vmin,
+                    vmax=vmax, s=34, marker="s", edgecolor="black", linewidths=0.6,
+                    label="treated", zorder=4)
+    fig.colorbar(sc, ax=ax, shrink=0.8, label=score_col)
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title(
+        f"{score_col} per pixel, matched pairs connected\n"
+        "(square = treated, circle = control; same colour at both ends = close match)"
+    )
+    ax.legend(loc="best")
+    return fig
+
+
+def plot_score_overlap(
+    pixels: gpd.GeoDataFrame,
+    score_col: str,
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    bins: int = 30,
+    ax: Optional[plt.Axes] = None,
+):
+    """Common-support histogram of a score: treated vs control overlap.
+
+    The standard feasibility check for score matching. It overlays the treated and
+    control **distributions of ``score_col``** (propensity or prognostic). Healthy
+    **overlap** -- the two histograms share a range -- means a control with a
+    matching score exists for most treated pixels; a treated mass sitting where no
+    controls are (poor common support) is exactly where matching will drop treated
+    pixels or stretch calipers. For a *propensity* score this is the canonical
+    positivity/overlap plot; for a *prognostic* score it shows whether treated and
+    control baseline risk are comparable at all.
+
+    Draw it on the **pre-match** scored panel to judge whether the match is even
+    feasible. Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    if score_col not in pixels.columns:
+        raise ValueError(f"{score_col!r} not in pixels; run the score builder first.")
+    is_t = _treated_mask(pixels, treated_col, restoration_yr_col)
+    sub = _unique_pixels(pixels.assign(_t=is_t.values), [score_col, "_t"])
+    t = sub.loc[sub["_t"], score_col].dropna()
+    c = sub.loc[~sub["_t"], score_col].dropna()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+    else:
+        fig = ax.figure
+
+    lo = float(min(t.min(), c.min())) if len(t) and len(c) else 0.0
+    hi = float(max(t.max(), c.max())) if len(t) and len(c) else 1.0
+    edges = np.linspace(lo, hi, bins + 1)
+    ax.hist(c, bins=edges, color=CONTROL_COLOR, alpha=0.5, density=True,
+            label=f"control (n={len(c):,})")
+    ax.hist(t, bins=edges, color=TREATED_COLOR, alpha=0.5, density=True,
+            label=f"treated (n={len(t):,})")
+    # mark the treated range that has no control support
+    if len(c):
+        c_lo, c_hi = float(c.min()), float(c.max())
+        if t.max() > c_hi:
+            ax.axvspan(c_hi, float(t.max()), color=TREATED_COLOR, alpha=0.08, zorder=0)
+        if t.min() < c_lo:
+            ax.axvspan(float(t.min()), c_lo, color=TREATED_COLOR, alpha=0.08, zorder=0)
+
+    ax.set_xlabel(score_col)
+    ax.set_ylabel("density")
+    ax.set_title(f"Common support: {score_col} (treated vs control)")
+    ax.legend(loc="best")
+    return fig
+
+
+def plot_prognostic_trajectory(
+    pixels: gpd.GeoDataFrame,
+    prefix: str = "phat_",
+    response: Optional[str] = "burned",
+    year_col: str = "year",
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    ax: Optional[plt.Axes] = None,
+):
+    """Per-year prognostic fire risk over time -- the point of the *per-year* model.
+
+    Plots the mean **per-year prognostic score** (``prefix<year>`` columns from
+    :func:`add_prognostic_score_series`) for treated vs control pixels across the
+    study years, with an inter-quartile band. Because a *separate* model is fit each
+    year, this curve shows how baseline fire risk **shifts over time** -- the spikes
+    are the dry / El Nino years the single collapsed score cannot represent. If the
+    per-year ``response`` is present, the observed never-treated burn rate is
+    overlaid (dashed) so you can see the prognostic scores tracking the real
+    year-to-year fire signal.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    cols = sorted(
+        (c for c in pixels.columns
+         if c.startswith(prefix) and c[len(prefix):].isdigit()),
+        key=lambda c: int(c[len(prefix):]),
+    )
+    if not cols:
+        raise ValueError(
+            f"no {prefix!r}<year> columns found; run add_prognostic_score_series first."
+        )
+    years = [int(c[len(prefix):]) for c in cols]
+
+    is_t = _treated_mask(pixels, treated_col, restoration_yr_col)
+    uniq = _unique_pixels(pixels.assign(_t=is_t.values), [*cols, "_t"])
+    t = uniq[uniq["_t"]]
+    c = uniq[~uniq["_t"]]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    for grp, color, label in ((c, CONTROL_COLOR, "control"), (t, TREATED_COLOR, "treated")):
+        if grp.empty:
+            continue
+        mean = [grp[col].mean() for col in cols]
+        q25 = [grp[col].quantile(0.25) for col in cols]
+        q75 = [grp[col].quantile(0.75) for col in cols]
+        ax.plot(years, mean, "-o", color=color, label=f"{label} (mean prognostic)", zorder=3)
+        ax.fill_between(years, q25, q75, color=color, alpha=0.15, zorder=1)
+
+    # observed never-treated burn rate per year, if the response is available
+    if response and response in pixels.columns and year_col in pixels.columns:
+        nt = pixels[_treated_mask(pixels, treated_col, restoration_yr_col).values == False]
+        obs = nt.groupby(year_col)[response].mean()
+        obs = obs.reindex(years)
+        ax.plot(years, obs.values, "--", color="0.4", lw=1.2,
+                label="observed control burn rate", zorder=2)
+
+    ax.set_xticks(years)
+    ax.set_xlabel("year")
+    ax.set_ylabel("prognostic fire risk  E[burn | X, untreated]")
+    ax.set_title("Per-year prognostic risk over time\n(spikes = dry/El Niño years)")
     ax.legend(loc="best")
     return fig
 
