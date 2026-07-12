@@ -194,7 +194,7 @@ What Castro et al. do, and how it maps onto our pipeline:
 |----------------------------------|--------------|
 | Treated = 250 m upstream semicircle of each canal block; control = rest of a 2 km buffer | treated = restoration polygons; control = matched unrestored peat (matching.py) |
 | Match 1:1, Mahalanobis, no replacement, **exact on subdistrict + peat depth**, |SMD| ≤ 0.2 | our Stage 5 matching (add exact-match keys; tighten caliper) |
-| Match on **propensity + prognostic scores** + pre-treatment fire history (t-1, t-2, 2015 drought) | extend matching inputs beyond raw covariates |
+| Match on **propensity + prognostic scores** + pre-treatment fire history (t-1, t-2, 2015 drought) | two options: `add_matching_scores` (collapsed scalar `pscore`+`phat`, simple) **or** the faithful series -- `add_prognostic_score_series` (per-year `phat_<yr>`), `add_propensity_score_series` (per-vintage `psm_<g>`), matched by `match_controls_event_time` on the event-time trajectory vector (fire lags + `phat_<t>` + `psm_<g>`) |
 | Outcome = binary fire, 50 m pixel-year (MODIS MCD64A1, ≤10% uncertainty) | `build_frame` pixel-year `burned` (swappable DV) |
 | Estimator = **Callaway & Sant'Anna (2021)** staggered DiD, **doubly robust**, `csdid` in Stata | `modeling/did.py` (`estimate_att`, `differences` pkg or R `did`) |
 | Outcome eq. (their Eq. 1): distances, climate, night-lights, **temporal lag** (fire t-1) + **spatial lag** (4 neighbours) | `add_fire_lags` builds both lags; pass as DiD covariates |
@@ -214,17 +214,29 @@ Implementation lives in `src/peatfire/modeling/did.py` and reuses `build_frame`:
 
 ```python
 from peatfire.modeling import (
-    build_frame, attach_cohort, add_fire_lags, build_panel,
+    add_matching_scores, match_controls, restrict_panel_to_matched,
+    attach_cohort, add_fire_lags, build_panel,
     estimate_att, aggregate_att, avoided_area,
 )
-frame  = build_frame(units, product="FireCCIS311", years=range(2019, 2025))
-frame  = attach_cohort(frame, cohort_by=pivot_year_by_site)  # g = restoration yr, 0 = control
-frame  = add_fire_lags(frame, res_m=300)                     # Castro Eq. 1 lags
-panel  = build_panel(frame, covariates=["fire_neighbors", "fire_tm1", "elev", "histosol_pct"])
+# Match first (Castro's two-step): score, then pair each treated pixel to its twin.
+scored = add_matching_scores(panel, continuous=covs, categorical=cats)  # -> pscore, phat
+matched = match_controls(scored, continuous=["pscore", "phat"],         # bijective match
+                         carry=covs)                                     # keep raw covs for balance
+# Restrict the DiD to the matched controls only, THEN identify off the change.
+panel  = restrict_panel_to_matched(panel, matched)           # matched pixels only
+panel  = attach_cohort(panel, cohort_by=pivot_year_by_site)  # g = restoration yr, 0 = control
+panel  = add_fire_lags(panel, res_m=300)                     # Castro Eq. 1 lags
+panel  = build_panel(panel, covariates=["fire_neighbors", "fire_tm1", "elev", "histosol_pct"])
 att    = estimate_att(panel, est_method="dr", cluster="site_id")   # doubly-robust CS
 overall = aggregate_att(att, "simple")   # headline ATT
 events  = aggregate_att(att, "event")    # event study -> pre-trends check
 ```
+
+Match on **propensity + prognostic scores** (`add_matching_scores`) to reproduce
+Castro's score-based match instead of raw-covariate Mahalanobis, then
+`restrict_panel_to_matched` wires that matched set into the DiD so the ATT is
+identified against each treated pixel's matched control(s), not the full
+candidate pool — the "match first, then estimate" design in full.
 
 The event-study pre-treatment coefficients are the **parallel-trends test**;
 Castro's planned-but-unbuilt placebo is our negative control (§ matching_assignment
