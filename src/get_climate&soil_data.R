@@ -226,6 +226,34 @@ nc.soil <- get_ssurgo_fixed(
   force.redo = FALSE
 )
 
+### Save the SSURGO download as ONE GeoPackage for the Python modeling pipeline.
+## `get_ssurgo` returns a list: $spatial (the map-unit POLYGONS, carrying MUKEY)
+## and $tabular (the relational attribute tables). SSURGO is relational, so the
+## soil *properties* don't live on the polygons -- they're in the attribute
+## tables: drainage class in `component`, organic matter / AWC in `chorizon`.
+## src/peatfire/modeling/soil.py reads exactly this file, aggregates each
+## property down to one value per MUKEY, joins it back to the polygons, and
+## rasterises it onto the analysis grid. It looks for the polygon layer plus the
+## `component`, `chorizon`, `muaggatt`, `mapunit` tables -- so we write each as a
+## GeoPackage layer under its own name. Without this step the download stays as
+## FedData's scattered per-table files and the Python side has nothing to read.
+soil_gpkg <- "data/interim/soil/ssurgo/nc_soil_ssurgo.gpkg"
+dir.create(dirname(soil_gpkg), recursive = TRUE, showWarnings = FALSE)
+
+## Polygon layer first (delete_dsn = TRUE starts the GeoPackage fresh).
+sf::st_write(nc.soil$spatial, soil_gpkg, layer = "mapunit_polys",
+             delete_dsn = TRUE, quiet = TRUE)
+
+## Relational attribute tables (non-spatial) as additional GeoPackage layers.
+## soil.py matches layer names case-insensitively, so keep these exact names.
+for (tbl in c("component", "chorizon", "muaggatt", "mapunit")) {
+  if (!is.null(nc.soil$tabular[[tbl]])) {
+    sf::st_write(as.data.frame(nc.soil$tabular[[tbl]]), soil_gpkg, layer = tbl,
+                 delete_layer = TRUE, quiet = TRUE)
+  }
+}
+message("wrote SSURGO GeoPackage -> ", soil_gpkg)
+
 ################################################################################
 ############## Get Land Cover data across years of interest ####################
 ################################################################################
