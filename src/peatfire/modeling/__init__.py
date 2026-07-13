@@ -77,6 +77,8 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_matched_pairs_covariate,
     plot_matched_pairs_geographic,
     plot_prognostic_trajectory,
+    plot_raw_burn_rate_by_event_time,
+    plot_raw_burn_rate_by_year,
     plot_score_map,
     plot_score_overlap,
 )
@@ -136,6 +138,8 @@ __all__ = [
     "plot_matched_pairs_covariate",
     "plot_matched_pairs_geographic",
     "plot_prognostic_trajectory",
+    "plot_raw_burn_rate_by_event_time",
+    "plot_raw_burn_rate_by_year",
     "plot_score_map",
     "plot_score_overlap",
     "fit_logit_clustered",
