@@ -35,6 +35,12 @@ The functions, in pipeline order:
 * :func:`plot_prognostic_trajectory` -- the per-year prognostic risk over time
   (treated vs control), showing the dry/El Nino risk spikes the *per-year*
   prognostic model captures and a single collapsed score cannot.
+* :func:`plot_raw_burn_rate_by_year` -- the raw, unadjusted burn rate per calendar
+  year for treated vs control: the descriptive signal every model is built to
+  explain, before any matching or adjustment.
+* :func:`plot_raw_burn_rate_by_event_time` -- the same raw burn rate aligned by
+  years since restoration (event time), the model-free companion to the DiD event
+  study.
 * :func:`plot_event_study` -- the one *temporal* diagnostic: the staggered-DiD ATT
   by time since restoration (event time), pre-period points shaded as the
   parallel-trends check. Consumes ``did.aggregate_att(..., kind="event")``.
@@ -781,6 +787,221 @@ def plot_prognostic_trajectory(
     ax.set_xlabel("year")
     ax.set_ylabel("prognostic fire risk  E[burn | X, untreated]")
     ax.set_title("Per-year prognostic risk over time\n(spikes = dry/El Niño years)")
+    ax.legend(loc="best")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 3c. Raw burned-rate signal (unadjusted, descriptive)
+# ---------------------------------------------------------------------------
+def _restoration_year_per_row(
+    frame: pd.DataFrame,
+    restoration_yr_col: str,
+    site_col: Optional[str],
+    is_treated: pd.Series,
+) -> pd.Series:
+    """Per-row restoration (cohort) year, filling controls from their site's year.
+
+    Treated rows carry their own restoration year in ``restoration_yr_col``
+    (e.g. ``End_Yr``). Matched controls usually do not -- they inherit a treated
+    site only through a ``site_col`` (``site_id`` in a matched set, ``Proj_Name``
+    upstream) -- so we build a ``site -> restoration year`` lookup from the treated
+    rows and map it onto every row, which aligns each matched control to its
+    treated site's cohort. Rows that resolve to no year (the never-treated control
+    pool, whose ``site_col`` is null) stay ``NaN`` and are handled by the caller as
+    a flat reference rather than an event-time curve.
+    """
+    ry = pd.Series(np.nan, index=frame.index, dtype="float64")
+    if restoration_yr_col in frame.columns:
+        ry = pd.to_numeric(frame[restoration_yr_col], errors="coerce")
+
+    if site_col is None:  # auto-detect the site key (matched vs upstream panel)
+        site_col = next((c for c in ("site_id", "Proj_Name") if c in frame.columns), None)
+    if site_col is not None and site_col in frame.columns \
+            and restoration_yr_col in frame.columns:
+        treated_rows = frame.loc[is_treated.values]
+        lookup = (
+            pd.to_numeric(treated_rows[restoration_yr_col], errors="coerce")
+            .groupby(treated_rows[site_col]).first().dropna()
+        )
+        if not lookup.empty:
+            ry = ry.fillna(frame[site_col].map(lookup))
+    return ry
+
+
+def _binomial_se(mean: np.ndarray, count: np.ndarray) -> np.ndarray:
+    """Standard error of a 0/1 rate: ``sqrt(p(1-p)/n)`` (NaN where ``n == 0``)."""
+    count = count.astype("float64")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        se = np.sqrt(mean * (1.0 - mean) / count)
+    return np.where(count > 0, se, np.nan)
+
+
+def plot_raw_burn_rate_by_year(
+    frame: pd.DataFrame,
+    response: str = "burned",
+    year_col: str = "year",
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    show_error: bool = True,
+    ax: Optional[plt.Axes] = None,
+):
+    """Raw burn rate per **calendar year**, treated vs control -- the unadjusted signal.
+
+    The plainest descriptive picture of the outcome: the observed mean of
+    ``response`` (the 0/1 ``burned`` flag) for each calendar year, split into the
+    treated (restoration-site) and control groups with no covariate adjustment,
+    matching, or modelling. This is what the DiD and the fitted models are built to
+    explain -- eyeball it first to see the level difference between the two groups
+    and the shared year-to-year swings (the dry / El Nino spikes) before any
+    estimator touches it.
+
+    Group membership is the *stable* treated/control split (:func:`_treated_mask`),
+    so a treated pixel counts as treated in every year, including the years before
+    its site was restored -- this is a group-level rate over calendar time, not an
+    event-time alignment (see :func:`plot_raw_burn_rate_by_event_time` for that).
+    With ``show_error`` a binomial standard-error band ``sqrt(p(1-p)/n)`` is shaded
+    around each line.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    for col in (response, year_col):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame; need {year_col!r} and {response!r}.")
+    is_t = _treated_mask(frame, treated_col, restoration_yr_col)
+    df = (
+        frame[[year_col, response]]
+        .assign(_t=is_t.values)
+        .dropna(subset=[response])
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    for grp_val, color, label in (
+        (True, TREATED_COLOR, "treated"),
+        (False, CONTROL_COLOR, "control"),
+    ):
+        g = df[df["_t"] == grp_val]
+        if g.empty:
+            continue
+        stat = g.groupby(year_col)[response].agg(["mean", "count"])
+        years = stat.index.to_numpy()
+        mean = stat["mean"].to_numpy(dtype="float64")
+        ax.plot(years, mean, "-o", color=color, zorder=3,
+                label=f"{label} (n={len(g):,} pixel-years)")
+        if show_error:
+            se = _binomial_se(mean, stat["count"].to_numpy())
+            ax.fill_between(years, mean - se, mean + se, color=color, alpha=0.15, zorder=1)
+
+    ax.set_xticks(sorted(df[year_col].unique()))
+    ax.set_xlabel("calendar year")
+    ax.set_ylabel(f"raw burn rate  mean({response})")
+    ax.set_title(
+        "Raw burn rate by calendar year (unadjusted)\n"
+        "treated = restoration sites, control = comparison pixels"
+    )
+    ax.legend(loc="best")
+    return fig
+
+
+def plot_raw_burn_rate_by_event_time(
+    frame: pd.DataFrame,
+    response: str = "burned",
+    year_col: str = "year",
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    site_col: Optional[str] = None,
+    show_error: bool = True,
+    ax: Optional[plt.Axes] = None,
+):
+    """Raw burn rate by **years after treatment** (event time) -- unadjusted.
+
+    The descriptive, model-free sibling of :func:`plot_event_study`. Each row's
+    event time is ``year - restoration_year`` (0 = the restoration year), and the
+    observed burn rate is averaged within each event-time bin for the treated
+    group. Because it is raw means rather than a differenced ATT, the two things to
+    read here are the **level shift** in the treated curve around event time 0 (the
+    canal blocks going in) and, if controls are aligned, whether treated and
+    control moved together *before* it -- the eyeball parallel-trends check.
+
+    Controls are aligned to their treated site's restoration year via ``site_col``
+    (``site_id`` in a matched set, else ``Proj_Name``): a matched control inherits
+    its site's cohort and so gets its own event-time curve. On the upstream pixel
+    panel, where the control pool has no site, controls resolve to no event time
+    and are instead drawn as a flat dashed **pooled-mean reference** (their overall
+    burn rate), mirroring the never-treated overlay in
+    :func:`plot_prognostic_trajectory`. The onset boundary (``-0.5``) and the
+    shaded pre-period match :func:`plot_event_study`.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    for col in (response, year_col):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame; need {year_col!r} and {response!r}.")
+    is_t = _treated_mask(frame, treated_col, restoration_yr_col)
+    ry = _restoration_year_per_row(frame, restoration_yr_col, site_col, is_t)
+    event_time = pd.to_numeric(frame[year_col], errors="coerce") - ry
+    df = pd.DataFrame({
+        "event_time": event_time.round(),
+        response: pd.to_numeric(frame[response], errors="coerce").values,
+        "_t": is_t.values,
+    }).dropna(subset=[response])
+    aligned = df.dropna(subset=["event_time"]).copy()
+    aligned["event_time"] = aligned["event_time"].astype(int)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    # References: treatment onset and the shaded pre-restoration window.
+    onset = -0.5  # boundary between the pre period (-1) and event time 0
+    if not aligned.empty:
+        et_min = int(aligned["event_time"].min())
+        if et_min < 0:
+            ax.axvspan(et_min - 0.5, onset, color="0.85", alpha=0.35, zorder=0)
+    ax.axvline(onset, color="0.4", lw=1.0, ls=":", zorder=1)
+
+    control_curve_drawn = False
+    for grp_val, color, label in (
+        (True, TREATED_COLOR, "treated"),
+        (False, CONTROL_COLOR, "control"),
+    ):
+        g = aligned[aligned["_t"] == grp_val]
+        if g.empty:
+            continue
+        stat = g.groupby("event_time")[response].agg(["mean", "count"])
+        et = stat.index.to_numpy()
+        mean = stat["mean"].to_numpy(dtype="float64")
+        ax.plot(et, mean, "-o", color=color, zorder=3,
+                label=f"{label} (n={len(g):,} pixel-years)")
+        if show_error:
+            se = _binomial_se(mean, stat["count"].to_numpy())
+            ax.fill_between(et, mean - se, mean + se, color=color, alpha=0.15, zorder=1)
+        if grp_val is False:
+            control_curve_drawn = True
+
+    # Never-treated controls carry no event time: draw their pooled burn rate as a
+    # flat dashed reference so the treated curve has a baseline to read against.
+    if not control_curve_drawn:
+        ref = df.loc[~df["_t"], response]
+        if not ref.empty:
+            ax.axhline(float(ref.mean()), color="0.4", lw=1.2, ls="--", zorder=2,
+                       label=f"control pooled mean (n={len(ref):,} pixel-years)")
+
+    if not aligned.empty:
+        ax.set_xticks(sorted(aligned["event_time"].unique()))
+    ax.set_xlabel("event time (years since restoration)")
+    ax.set_ylabel(f"raw burn rate  mean({response})")
+    ax.set_title(
+        "Raw burn rate by years after treatment (unadjusted)\n"
+        "event time 0 = restoration year; pre-period is left of the onset line"
+    )
     ax.legend(loc="best")
     return fig
 
