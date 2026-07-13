@@ -548,6 +548,20 @@ DEFAULT_ANNUAL_ELEMENTS: dict[str, dict] = {
 }
 
 
+# scPDSI drought index, built with the same station -> annual-value -> IDW path as
+# the other annual elements, but from its own long table (nc_pdsi_long.Rds, one row
+# per station-MONTH) rather than the daily GHCN records. scPDSI is already a monthly
+# index, so a year's value is the MEAN of that year's monthly scPDSI (the annual
+# drought level; ~0 = normal, negative = drought). It is intentionally *only* a
+# per-year (temporal) covariate: scPDSI is self-calibrating, so a long-run normal is
+# ~0 everywhere and carries no spatial signal to match on -- hence no `*_normal`
+# counterpart in DEFAULT_CLIMATE_ELEMENTS. Pass this to build_annual_climate as
+# `elements=` alongside a {"pdsi": pdsi_records} mapping.
+DEFAULT_PDSI_ELEMENTS: dict[str, dict] = {
+    "pdsi": {"value_col": "scPDSI", "annual_reduce": "mean"},
+}
+
+
 def build_annual_climate(
     records_by_element: Mapping[str, gpd.GeoDataFrame],
     aoi: gpd.GeoDataFrame,

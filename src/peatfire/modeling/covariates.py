@@ -261,6 +261,20 @@ TEMPORAL_COVARIATES: dict[str, CovariateSpec] = {
         native_res_m=300.0,
         source="GHCN daily TMIN annual mean, IDW-interpolated (modeling.climate).",
     ),
+    "pdsi": CovariateSpec(
+        name="pdsi",
+        role="continuous",
+        # /data/processed/climate/annual/pdsi_<year>_nc.tif  (annual mean scPDSI)
+        # Self-calibrating Palmer Drought Severity Index: ~0 = normal, negative =
+        # drought. Built per year (its normal is ~0 everywhere, so there is no
+        # static-normal counterpart in COVARIATES) for a treated:pdsi drought-year
+        # interaction, the drought analogue of the treated:precip term.
+        root_parts=("processed", "climate", "annual"),
+        glob="pdsi_{year}_nc.tif",
+        native_res_m=300.0,
+        source="scPDSI (Palmer drought index) annual mean, IDW-interpolated "
+        "from GHCN precip + Hargreaves PET (modeling.climate / get_climate&soil_data.R).",
+    ),
 }
 
 
