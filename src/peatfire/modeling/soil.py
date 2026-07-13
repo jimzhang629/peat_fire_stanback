@@ -83,11 +83,24 @@ DEFAULT_SOIL_ATTRIBUTES: dict[str, dict] = {
 
 
 def _col_ci(df, name: str) -> Optional[str]:
-    """Return ``df``'s column matching ``name`` case-insensitively, or ``None``."""
+    """Return ``df``'s column matching ``name`` case-insensitively, or ``None``.
+
+    Also tolerates the ``.``/``_`` split in SSURGO's representative-value columns:
+    FedData's R export spells them with a dot (``awc.r``, ``om.r``, ``comppct.r``)
+    while the physical SSURGO / GeoPackage names use an underscore (``awc_r``), so
+    a lookup for ``awc_r`` still resolves an ``awc.r`` column and vice versa.
+    """
     if name in df.columns:
         return name
     lower = {str(c).lower(): c for c in df.columns}
-    return lower.get(name.lower())
+    if name.lower() in lower:
+        return lower[name.lower()]
+    # Final fallback: treat '.' and '_' as equivalent (awc.r <-> awc_r).
+    def _norm(s: str) -> str:
+        return str(s).lower().replace(".", "_")
+
+    normalized = {_norm(c): c for c in df.columns}
+    return normalized.get(_norm(name))
 
 
 @functools.lru_cache(maxsize=None)
