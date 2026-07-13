@@ -85,6 +85,75 @@ saveRDS(nc.prcp, "data/interim/climate/ghcn/nc_prcp_long.Rds")
 
 ################################################################################
 ################################################################################
+### Palmer Drought Severity Index (scPDSI) -- year-specific drought per station
+################################################################################
+## A TEMPORAL (per-year) climate covariate. scPDSI is a self-calibrating drought
+## index (~0 = normal, negative = drought), computed monthly per station from
+## precip + Hargreaves PET. We save the monthly per-station series as a long table
+## (nc_pdsi_long.Rds); src/peatfire/modeling/climate.py reads it, takes each year's
+## MEAN monthly scPDSI as that year's drought level, and IDW-interpolates it onto
+## the grid like the annual precip/tmax layers (climate.DEFAULT_PDSI_ELEMENTS).
+## scPDSI is self-calibrating, so a long-run *normal* is ~0 everywhere and carries
+## no signal -- PDSI is therefore built only as a per-year layer, never a normal.
+library(SPEI)     # hargreaves() reference-ET
+library(scPDSI)   # pdsi() self-calibrating PDSI
+
+## Monthly precip total per station-month.
+totalprcp <- nc.prcp %>%
+  group_by(STATION, YEAR, MONTH) %>%
+  summarize(PRCP = sum(PRCP, na.rm = TRUE), .groups = "drop")
+
+## Join monthly mean TMAX/TMIN + station latitude, then Hargreaves PET.
+pdsi_in <- totalprcp %>%
+  left_join(nc.max %>% group_by(STATION, YEAR, MONTH) %>%
+              summarize(TMAX = mean(TMAX, na.rm = TRUE), .groups = "drop")) %>%
+  left_join(nc.min %>% group_by(STATION, YEAR, MONTH) %>%
+              summarize(TMIN = mean(TMIN, na.rm = TRUE), .groups = "drop")) %>%
+  left_join(nc.climate$spatial %>% rename(STATION = ID)) %>%
+  mutate(latitude = st_coordinates(geometry)[, "Y"]) %>%
+  group_by(STATION, YEAR, MONTH) %>%
+  mutate(PET = hargreaves(TMIN, TMAX, lat = latitude, na.rm = TRUE),
+         MONTH = as.numeric(MONTH),
+         YEAR = as.numeric(YEAR)) %>%
+  arrange(STATION, YEAR, MONTH)
+
+## pdsi() needs a gap-free monthly series per station.
+pdsi_in <- pdsi_in %>%
+  ungroup() %>%
+  group_by(STATION) %>%
+  complete(YEAR = 2000:2026, MONTH = 1:12)
+
+run_scpdsi <- function(station_df) {
+  start_year <- station_df$YEAR[1]
+  result <- scPDSI::pdsi(P = station_df$PRCP, PE = station_df$PET,
+                         start = start_year, sc = TRUE)  # sc = TRUE -> scPDSI
+  n   <- length(result$X)
+  idx <- seq_len(n)
+  data.frame(
+    STATION = station_df$STATION[1],
+    YEAR    = start_year + (idx - 1) %/% 12,
+    MONTH   = ((idx - 1) %%  12) + 1,
+    scPDSI  = as.numeric(result$X),
+    stringsAsFactors = FALSE
+  )
+}
+
+## Run per station, stack, and re-attach station point geometry (so the Python
+## side has station locations to interpolate from). Kept as a long table with
+## STATION/YEAR/MONTH/scPDSI -- the shape climate.load_ghcn_stations expects.
+pdsi_results <- pdsi_in %>%
+  group_by(STATION) %>%
+  group_split() %>%
+  purrr::map(run_scpdsi) %>%
+  bind_rows() %>%
+  left_join(nc.climate$spatial %>% rename(STATION = ID)) %>%
+  st_as_sf()
+
+saveRDS(pdsi_results, "data/interim/climate/ghcn/nc_pdsi_long.Rds")
+message("wrote scPDSI long table -> data/interim/climate/ghcn/nc_pdsi_long.Rds")
+
+################################################################################
+################################################################################
 ####################### Get soil information from SSURGO #######################
 ################################################################################
 
