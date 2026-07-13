@@ -243,6 +243,12 @@ Castro's planned-but-unbuilt placebo is our negative control (§ matching_assign
 "negative control"). Keep the matched design either way — it is what makes
 conditional parallel trends credible.
 
+> **Implementation walkthrough.** For a function-by-function explanation of the
+> score-based matching and match-first DiD code (`add_matching_scores`, the per-year
+> `add_prognostic_score_series` / per-vintage `add_propensity_score_series`,
+> `match_controls_event_time`, `restrict_panel_to_matched`, and the score diagnostic
+> plots), with the justification for each step, see **`score_matching_and_did.md`**.
+
 ---
 
 ## References
