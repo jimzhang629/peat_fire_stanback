@@ -2,7 +2,7 @@
 
 Turns the chosen fire product (FireCCIS311) plus environmental covariates and
 peat condition/restoration/management into a tidy pixel-year frame and fitted
-models. See ``modeling_roadmap.md`` for the design.
+models. See ``modeling_notebook_explained.md`` for the design.
 
 Three layers, mirroring the fire-comparison toolkit:
 

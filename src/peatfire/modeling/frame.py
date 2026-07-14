@@ -10,7 +10,7 @@ step, which is intentionally *not* in this module) and the layers registered in
 
 ready to hand to :mod:`peatfire.modeling.models`.
 
-Design choices (see ``decisions.md`` / ``modeling_roadmap.md``):
+Design choices (see ``modeling_notebook_explained.md``, Part V):
 
 * The frame is built on the **same EPSG:5070 common grid** the fire-product
   comparison uses (:func:`peatfire.build_common_grid`), so no new CRS/area
