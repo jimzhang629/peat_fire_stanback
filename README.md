@@ -9,6 +9,15 @@ data/            raw/, interim/, processed/ (contents git-ignored)
 notebooks/       analysis notebooks; see example.ipynb
 ```
 
+## Documentation
+
+`modeling_notebook_explained.md` is the master guide: a layered walkthrough of
+`notebooks/modeling.ipynb`, the math and statistics behind every step
+(matching, propensity/prognostic scores, the staggered DiD / ATT, odds ratios),
+the design-decision log, and the fire-product comparison & validation toolkit
+decisions (Appendix A). It replaces the former `modeling_roadmap.md`,
+`decisions.md`, `score_matching_and_did.md`, and `matching_assignment.md`.
+
 ## Setup
 
 Install the project once as an editable package. This puts `peatfire` on the

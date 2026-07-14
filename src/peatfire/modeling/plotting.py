@@ -35,6 +35,10 @@ The functions, in pipeline order:
 * :func:`plot_prognostic_trajectory` -- the per-year prognostic risk over time
   (treated vs control), showing the dry/El Nino risk spikes the *per-year*
   prognostic model captures and a single collapsed score cannot.
+* :func:`plot_covariate_vs_burn` -- the burn rate against one covariate (binned for
+  a continuous layer, per-class for a categorical one), the "is this covariate
+  interesting on its own?" picture; :func:`plot_covariates_vs_burn` lays that out
+  for every covariate in the frame at once.
 * :func:`plot_raw_burn_rate_by_year` -- the raw, unadjusted burn rate per calendar
   year for treated vs control: the descriptive signal every model is built to
   explain, before any matching or adjustment.
@@ -60,7 +64,13 @@ import pandas as pd
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
 from ..fire_products_comparison.plotting import OKABE_ITO, set_fire_style
-from .covariates import available_covariates, covariate_on_grid, get_covariate
+from .covariates import (
+    COVARIATES,
+    TEMPORAL_COVARIATES,
+    available_covariates,
+    covariate_on_grid,
+    get_covariate,
+)
 from .frame import DEFAULT_RES_M
 
 # Consistent treated/control colours + labels across every diagnostic here.
@@ -1003,6 +1013,217 @@ def plot_raw_burn_rate_by_event_time(
         "event time 0 = restoration year; pre-period is left of the onset line"
     )
     ax.legend(loc="best")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 3d. Covariate vs burned response (the "is this covariate interesting?" picture)
+# ---------------------------------------------------------------------------
+def _is_categorical_covariate(
+    frame: pd.DataFrame, covariate: str, override: Optional[bool]
+) -> bool:
+    """Decide whether ``covariate`` should be drawn as categories or binned.
+
+    Honours an explicit ``override`` first; otherwise trusts the covariate
+    registry's ``role`` (land cover / drainage class are ``"categorical"``), and
+    finally falls back to a dtype/cardinality heuristic for columns that are not
+    registered (a non-numeric dtype, or a numeric column with few distinct values,
+    reads as categorical). Keeps :func:`plot_covariate_vs_burn` usable on any frame
+    column, registered or derived.
+    """
+    if override is not None:
+        return override
+    try:
+        return get_covariate(covariate).role == "categorical"
+    except KeyError:
+        pass
+    s = frame[covariate]
+    return (not pd.api.types.is_numeric_dtype(s)) or s.nunique(dropna=True) <= 12
+
+
+def _burn_rate_by_bin(
+    x: np.ndarray, burned: np.ndarray, bins: int
+) -> pd.DataFrame:
+    """Mean burn rate within equal-count (quantile) bins of a continuous covariate.
+
+    Returns one row per bin with the bin's mean covariate value ``x`` (the plotting
+    abscissa), the mean ``rate`` of ``burned``, the pixel-year ``count``, and the
+    binomial ``se``. Quantile bins keep ``count`` roughly balanced so a sparse tail
+    does not produce a wild, single-pixel rate; degenerate edges (a covariate with
+    fewer distinct values than ``bins``) collapse via ``duplicates="drop"``.
+    """
+    q = pd.qcut(x, q=min(bins, np.unique(x).size), duplicates="drop")
+    g = pd.DataFrame({"x": x, "burned": burned, "bin": q}).groupby("bin", observed=True)
+    out = g.agg(x=("x", "mean"), rate=("burned", "mean"), count=("burned", "size"))
+    out["se"] = _binomial_se(out["rate"].to_numpy(), out["count"].to_numpy())
+    return out.reset_index(drop=True)
+
+
+def plot_covariate_vs_burn(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str = "burned",
+    bins: int = 12,
+    categorical: Optional[bool] = None,
+    by_treatment: bool = False,
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    show_error: bool = True,
+    max_categories: int = 25,
+    ax: Optional[plt.Axes] = None,
+):
+    """Burn rate vs one covariate -- the covariate-against-fire 2-D picture.
+
+    The descriptive "is this covariate interesting on its own?" plot the project
+    notes ask for. Because ``burned`` is a 0/1 pixel-year flag, a raw scatter of it
+    against a covariate is uninformative (every point sits on 0 or 1), so this bins
+    the covariate and plots the **mean burn rate within each bin** -- i.e. the
+    burned *fraction* of pixel-years at that covariate level -- which is the sample
+    analogue of the burn *probability* the models estimate:
+
+    * **continuous** covariate (drainage, elevation, climate, ...): equal-count
+      (quantile) bins, drawn as a line of burn rate vs the bin's mean covariate
+      value, with a binomial standard-error band. A downward slope means fire gets
+      *less* likely as the covariate rises (e.g. better-drained/drier pixels burning
+      less), the raw shape the fitted coefficient summarises.
+    * **categorical** covariate (land cover, drainage class): one point (or bar) of
+      burn rate per class, so you can read which classes carry the fire. Classes are
+      ordered by burn rate and capped at ``max_categories``.
+
+    Every pixel-*year* is one observation (the frame is **not** collapsed to unique
+    pixels), so the rate is a true exposure over the panel. With
+    ``by_treatment=True`` the treated and control groups are drawn separately (the
+    stable split from :func:`_treated_mask`) -- the picture of whether a covariate's
+    fire gradient differs between restored and comparison land, and the visual
+    companion to putting that covariate alongside ``treated`` in
+    :func:`peatfire.modeling.fit_ols_clustered`.
+
+    Whether the covariate is treated as categorical is auto-detected from the
+    covariate registry / dtype; override with ``categorical=True/False``.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    for col in (covariate, response):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame.")
+    is_cat = _is_categorical_covariate(frame, covariate, categorical)
+
+    df = frame[[covariate, response]].copy()
+    df[response] = pd.to_numeric(df[response], errors="coerce")
+    if by_treatment:
+        df["_t"] = _treated_mask(frame, treated_col, restoration_yr_col).values
+    df = df.dropna(subset=[covariate, response])
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    else:
+        fig = ax.figure
+
+    if by_treatment:
+        groups = [
+            (df[df["_t"]], TREATED_COLOR, "treated"),
+            (df[~df["_t"]], CONTROL_COLOR, "control"),
+        ]
+    else:
+        groups = [(df, TREATED_COLOR, "all pixels")]
+
+    if is_cat:
+        # burn rate per class; order categories by the pooled rate for readability
+        order = (
+            df.groupby(covariate, observed=True)[response].mean()
+            .sort_values(ascending=False).index[:max_categories]
+        )
+        pos = np.arange(len(order))
+        width = 0.8 / len(groups)
+        for k, (g, color, label) in enumerate(groups):
+            if g.empty:
+                continue
+            stat = g.groupby(covariate, observed=True)[response].agg(["mean", "size"])
+            stat = stat.reindex(order)
+            rate = stat["mean"].to_numpy(dtype="float64")
+            offset = (k - (len(groups) - 1) / 2) * width
+            ax.bar(pos + offset, rate, width=width, color=color, alpha=0.75,
+                   label=f"{label} (n={int(g.shape[0]):,})", zorder=2)
+            if show_error:
+                se = _binomial_se(rate, stat["size"].to_numpy())
+                ax.errorbar(pos + offset, rate, yerr=se, fmt="none",
+                            ecolor="0.3", elinewidth=0.8, capsize=2, zorder=3)
+        ax.set_xticks(pos)
+        ax.set_xticklabels([str(o) for o in order], rotation=45, ha="right")
+    else:
+        for g, color, label in groups:
+            if g.empty or g[covariate].nunique() < 2:
+                continue
+            binned = _burn_rate_by_bin(
+                g[covariate].to_numpy(dtype="float64"),
+                g[response].to_numpy(dtype="float64"),
+                bins,
+            )
+            ax.plot(binned["x"], binned["rate"], "-o", color=color, zorder=3,
+                    label=f"{label} (n={int(g.shape[0]):,} pixel-years)")
+            if show_error:
+                ax.fill_between(
+                    binned["x"], binned["rate"] - binned["se"],
+                    binned["rate"] + binned["se"], color=color, alpha=0.15, zorder=1,
+                )
+
+    ax.set_xlabel(covariate)
+    ax.set_ylabel(f"burn rate  mean({response})")
+    ax.set_ylim(bottom=0)
+    ax.set_title(f"Burn rate vs {covariate}")
+    ax.legend(loc="best")
+    return fig
+
+
+def plot_covariates_vs_burn(
+    frame: pd.DataFrame,
+    covariates: Optional[Sequence[str]] = None,
+    response: str = "burned",
+    bins: int = 12,
+    by_treatment: bool = False,
+    treated_col: str = "treated",
+    restoration_yr_col: str = "End_Yr",
+    ncols: int = 3,
+    max_categories: int = 25,
+):
+    """Panel of :func:`plot_covariate_vs_burn` over every covariate in the frame.
+
+    The one-call overview: lay out the burn-rate-vs-covariate picture for each
+    covariate as its own panel, so drainage and all the other layers can be scanned
+    against fire at once (the project note "plot each covariate against burned area
+    -- they are interesting in and of themselves"). Defaults to every registered
+    covariate present as a column in ``frame`` (static + per-year); pass
+    ``covariates`` to pick a subset or a custom order. ``by_treatment`` and ``bins``
+    are forwarded to each panel.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    if covariates is None:
+        registered = set(COVARIATES) | set(TEMPORAL_COVARIATES)
+        covariates = [c for c in frame.columns if c in registered]
+    covariates = [c for c in covariates if c in frame.columns]
+    if not covariates:
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5, "no covariates in frame", ha="center", va="center")
+        return fig
+
+    nrows = int(np.ceil(len(covariates) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5.6 * ncols, 4.2 * nrows), squeeze=False
+    )
+    axes_flat = axes.ravel()
+    for ax, name in zip(axes_flat, covariates):
+        plot_covariate_vs_burn(
+            frame, name, response=response, bins=bins, by_treatment=by_treatment,
+            treated_col=treated_col, restoration_yr_col=restoration_yr_col,
+            max_categories=max_categories, ax=ax,
+        )
+    for ax in axes_flat[len(covariates):]:  # blank any unused panels
+        ax.set_axis_off()
+    fig.suptitle(f"Burn rate vs each covariate  (response = {response})", y=1.0)
+    fig.tight_layout()
     return fig
 
 

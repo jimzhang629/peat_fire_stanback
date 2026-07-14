@@ -10,7 +10,7 @@ step, which is intentionally *not* in this module) and the layers registered in
 
 ready to hand to :mod:`peatfire.modeling.models`.
 
-Design choices (see ``decisions.md`` / ``modeling_roadmap.md``):
+Design choices (see ``modeling_notebook_explained.md``, Part V):
 
 * The frame is built on the **same EPSG:5070 common grid** the fire-product
   comparison uses (:func:`peatfire.build_common_grid`), so no new CRS/area
@@ -279,3 +279,58 @@ def build_frame(
     frame = pd.concat(rows, ignore_index=True)
     # burned is NaN where the product had no coverage; drop those cell-years.
     return frame.dropna(subset=["burned"]).reset_index(drop=True)
+
+
+def attach_fire_response(
+    points,
+    aoi: gpd.GeoDataFrame,
+    product: str = "FireCCIS311",
+    res_m: float = DEFAULT_RES_M,
+    year_col: str = "year",
+    response_col: str = "burned",
+):
+    """Sample the per-year fire response at pixel points.
+
+    The pixel-panel analogue of :func:`build_frame`'s response step: where
+    ``build_frame`` rasterizes unit *polygons* and reads the response on the
+    cells they cover, this reads the same swappable ``load_standardized(product,
+    year, aoi)`` layer at existing pixel **points** -- one value per
+    ``(x, y, year)`` row of a panel such as the output of
+    :func:`peatfire.modeling.get_treated_and_control_pixels`.
+
+    Parameters
+    ----------
+    points : (Geo)DataFrame
+        Pixel-year panel carrying ``x``, ``y`` (EPSG:5070 cell centres) and
+        ``year_col``. Returned copy is the same object with ``response_col``
+        added; the input is not mutated.
+    aoi : GeoDataFrame
+        Area the product is clipped to (and the extent of the sampling grid).
+    product : str
+        Registered fire product supplying the response; swap for a severity
+        product to sample severity instead.
+    res_m : float
+        Grid resolution in metres (default = FireCCIS311 native ~300 m). Use the
+        same value the panel's pixels were laid out on so ``sel(method=
+        "nearest")`` lands on the intended cell.
+
+    Returns
+    -------
+    Same type as ``points``, with ``response_col`` filled per pixel-year.
+    Years the product does not cover are left NaN (callers decide whether to
+    drop them; :func:`peatfire.modeling.did.build_panel` drops them itself).
+    """
+    grid = build_common_grid(aoi, res_m=res_m)
+
+    out = points.copy()
+    out[response_col] = np.nan
+    for year, idx in out.groupby(year_col).groups.items():
+        resp = load_standardized(product, int(year), aoi)
+        if resp is None:  # product missing this year -> leave NaN
+            continue
+        burned = to_common_grid(resp.astype("float32"), grid, how="max")
+        sub = out.loc[idx]
+        xi = xr.DataArray(sub["x"].values, dims="point")
+        yi = xr.DataArray(sub["y"].values, dims="point")
+        out.loc[idx, response_col] = burned.sel(x=xi, y=yi, method="nearest").values
+    return out

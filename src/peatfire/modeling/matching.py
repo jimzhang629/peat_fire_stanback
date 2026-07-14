@@ -1,9 +1,9 @@
 """Control-pixel matching -- ASSIGNMENT SCAFFOLD (you implement Part A).
 
 Builds the matched treated/control pixel set that :func:`peatfire.build_frame`
-consumes. This is the causal-design heart of the study and is intentionally left
-for you to implement; see ``matching_assignment.md`` for the staged walkthrough,
-guiding questions, and hints.
+consumes. This is the causal-design heart of the study; see
+``modeling_notebook_explained.md`` (Part VII) for the staged walkthrough and
+the testing recipes, and Part IV for the underlying math.
 
 Layout
 ------

@@ -209,6 +209,49 @@ def attach_cohort(
     return out
 
 
+def prepare_panel(
+    frame: pd.DataFrame,
+    restoration_yr_col: str = "End_Yr",
+    site_col: str = "Proj_Name",
+    treated_col: str = "treated",
+    entity: str = "unit_id",
+    x: str = "x",
+    y: str = "y",
+) -> pd.DataFrame:
+    """Add the DiD bookkeeping a pixel-year panel needs: entity ids + cohort ``g``.
+
+    Wraps the two steps every DiD run repeats once the response is attached
+    (see :func:`peatfire.modeling.attach_fire_response`):
+
+    1. one stable ``entity`` id per distinct ``(x, y)`` pixel -- the panel's
+       entity dimension;
+    2. :func:`attach_cohort` with the site -> restoration-year map read off the
+       frame itself. Control-pool pixels carry no ``site_col``/restoration year
+       and fall through to ``g = 0`` (never-treated).
+
+    Parameters
+    ----------
+    frame : DataFrame
+        Pixel-year panel with ``x``/``y``, the per-year ``treated_col``, and --
+        on restoration-site pixels -- ``site_col`` and ``restoration_yr_col``
+        (as produced by ``get_treated_and_control_pixels``).
+
+    Returns
+    -------
+    DataFrame
+        ``frame`` plus ``entity`` and the integer cohort column ``g``. Feed to
+        :func:`fit_att` (or :func:`build_panel` directly).
+    """
+    out = frame.copy()
+    out[entity] = out.groupby([x, y]).ngroup()
+    cohort_by = (
+        out.dropna(subset=[restoration_yr_col])
+        .groupby(site_col)[restoration_yr_col]
+        .first()
+    )
+    return attach_cohort(out, cohort_by=cohort_by, key=site_col, treated_col=treated_col)
+
+
 # ---------------------------------------------------------------------------
 # 2. Fire history: temporal + spatial lags (Castro Eq. 1)
 # ---------------------------------------------------------------------------
@@ -466,6 +509,51 @@ def aggregate_att(att, kind: str = "simple", backend: str = "differences"):
                  "group": "group", "calendar": "calendar"}
         return did.aggte(att, type=alias.get(kind, kind))
     raise ValueError(f"unknown backend {backend!r}.")
+
+
+# ---------------------------------------------------------------------------
+# 5b. One-call convenience: panel -> ATT -> aggregates
+# ---------------------------------------------------------------------------
+def fit_att(
+    frame: pd.DataFrame,
+    covariates: Sequence[str] = (),
+    response: str = "burned",
+    entity: str = "unit_id",
+    time: str = "year",
+    est_method: str = "dr",
+    cluster: Optional[str] = None,
+    backend: str = "differences",
+):
+    """Run the whole staggered DiD in one call and return its two summaries.
+
+    Chains :func:`build_panel` -> :func:`estimate_att` -> :func:`aggregate_att`
+    (``"simple"`` and ``"event"``) -- the sequence the notebook repeats for the
+    unmatched and the matched panel. ``frame`` must already carry the cohort
+    column ``g`` and the entity id (see :func:`prepare_panel`); rows with a NaN
+    response are dropped inside :func:`build_panel`.
+
+    Returns
+    -------
+    (att, overall, event_study)
+        The fitted backend estimator, the overall ATT aggregation (Castro's
+        headline number), and the event-study table (its pre-treatment rows are
+        the parallel-trends check -- plot with ``plot_event_study``).
+    """
+    covariates = list(covariates)
+    panel = build_panel(
+        frame, entity=entity, time=time, response=response, covariates=covariates
+    )
+    att = estimate_att(
+        panel,
+        response=response,
+        covariates=covariates,
+        est_method=est_method,
+        cluster=cluster,
+        backend=backend,
+    )
+    overall = aggregate_att(att, kind="simple", backend=backend)
+    event_study = aggregate_att(att, kind="event", backend=backend)
+    return att, overall, event_study
 
 
 # ---------------------------------------------------------------------------

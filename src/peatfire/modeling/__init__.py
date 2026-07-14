@@ -2,7 +2,7 @@
 
 Turns the chosen fire product (FireCCIS311) plus environmental covariates and
 peat condition/restoration/management into a tidy pixel-year frame and fitted
-models. See ``modeling_roadmap.md`` for the design.
+models. See ``modeling_notebook_explained.md`` for the design.
 
 Three layers, mirroring the fire-comparison toolkit:
 
@@ -37,12 +37,18 @@ from .covariates import (
     temporal_covariate_on_grid,
 )
 from .frame import (
+    attach_fire_response,
     build_frame,
     load_completed_restoration_sites_in_analysis_crs,
+    load_restoration_sites,
 )
 from .models import (
+    coefficients,
+    drainage_effect_table,
+    fit_drainage_models,
     fit_logit_clustered,
     fit_mixed_logit,
+    fit_ols_clustered,
     odds_ratios,
 )
 from .did import (  # staggered DiD alternative (Castro et al. 2026)
@@ -52,6 +58,8 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     avoided_area,
     build_panel,
     estimate_att,
+    fit_att,
+    prepare_panel,
     restrict_panel_to_matched,
 )
 from .climate import (  # GHCN station points -> gridded climate covariates
@@ -73,6 +81,8 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_covariate_maps,
     plot_covariate_pairs,
     plot_covariate_space,
+    plot_covariate_vs_burn,
+    plot_covariates_vs_burn,
     plot_event_study,
     plot_matched_pairs_covariate,
     plot_matched_pairs_geographic,
@@ -118,8 +128,10 @@ __all__ = [
     "load_covariate",
     "load_temporal_covariate",
     "temporal_covariate_on_grid",
+    "attach_fire_response",
     "build_frame",
     "load_completed_restoration_sites_in_analysis_crs",
+    "load_restoration_sites",
     "build_annual_climate",
     "build_climate_normals",
     "idw_to_grid",
@@ -134,6 +146,8 @@ __all__ = [
     "plot_covariate_maps",
     "plot_covariate_pairs",
     "plot_covariate_space",
+    "plot_covariate_vs_burn",
+    "plot_covariates_vs_burn",
     "plot_event_study",
     "plot_matched_pairs_covariate",
     "plot_matched_pairs_geographic",
@@ -142,8 +156,12 @@ __all__ = [
     "plot_raw_burn_rate_by_year",
     "plot_score_map",
     "plot_score_overlap",
+    "coefficients",
+    "drainage_effect_table",
+    "fit_drainage_models",
     "fit_logit_clustered",
     "fit_mixed_logit",
+    "fit_ols_clustered",
     "odds_ratios",
     "add_fire_lags",
     "aggregate_att",
@@ -151,6 +169,8 @@ __all__ = [
     "avoided_area",
     "build_panel",
     "estimate_att",
+    "fit_att",
+    "prepare_panel",
     "restrict_panel_to_matched",
     "add_matching_scores",
     "add_prognostic_score_series",

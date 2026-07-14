@@ -120,14 +120,18 @@ except ImportError:
     # remain available.
     pass
 
-try:  # optional modeling API (peat condition -> fire); see modeling_roadmap.md
+try:  # optional modeling API (peat condition -> fire); see modeling_notebook_explained.md
     from .modeling import (
         COVARIATES,
         available_covariates,
         build_frame,
+        coefficients,
         covariate_on_grid,
+        drainage_effect_table,
+        fit_drainage_models,
         fit_logit_clustered,
         fit_mixed_logit,
+        fit_ols_clustered,
         list_covariates,
         load_covariate,
         load_restoration_sites,
@@ -138,9 +142,13 @@ try:  # optional modeling API (peat condition -> fire); see modeling_roadmap.md
         "COVARIATES",
         "available_covariates",
         "build_frame",
+        "coefficients",
         "covariate_on_grid",
+        "drainage_effect_table",
+        "fit_drainage_models",
         "fit_logit_clustered",
         "fit_mixed_logit",
+        "fit_ols_clustered",
         "list_covariates",
         "load_covariate",
         "load_restoration_sites",
