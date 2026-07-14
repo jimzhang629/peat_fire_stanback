@@ -120,7 +120,7 @@ except ImportError:
     # remain available.
     pass
 
-try:  # optional modeling API (peat condition -> fire); see modeling_roadmap.md
+try:  # optional modeling API (peat condition -> fire); see modeling_notebook_explained.md
     from .modeling import (
         COVARIATES,
         available_covariates,

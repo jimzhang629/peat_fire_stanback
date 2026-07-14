@@ -1,8 +1,8 @@
 """Fit the peat-condition -> fire models on the tidy frame.
 
 Consumes the table from :mod:`peatfire.modeling.frame` and fits the sequence in
-``modeling_roadmap.md``, from the honest version of the naive pixel GLM up to a
-mixed model:
+``modeling_notebook_explained.md``, from the honest version of the naive pixel
+GLM up to a mixed model:
 
 1. :func:`fit_logit_clustered` -- logistic ``burned ~ treated + covariates`` with
    **standard errors clustered by site**, so pixels within a restoration site are

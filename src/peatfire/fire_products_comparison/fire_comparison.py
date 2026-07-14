@@ -16,7 +16,7 @@ Everything hangs off one entry point, :func:`compare_fire_products`, whose first
 argument is an AOI -- a shapefile/GeoPackage path or a GeoDataFrame. The same
 call works for the whole state, for peatlands, or for non-peatlands.
 
-Design choices (see ``decisions.md``):
+Design choices (see ``modeling_notebook_explained.md``, Appendix A):
 
 * **Analysis CRS is fixed at EPSG:5070** (NAD83 / CONUS Albers Equal Area), not
   the AOI's CRS. Area is only meaningful in an equal-area projection, and a

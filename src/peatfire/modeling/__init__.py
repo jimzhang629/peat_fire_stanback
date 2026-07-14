@@ -2,7 +2,7 @@
 
 Turns the chosen fire product (FireCCIS311) plus environmental covariates and
 peat condition/restoration/management into a tidy pixel-year frame and fitted
-models. See ``modeling_roadmap.md`` for the design.
+models. See ``modeling_notebook_explained.md`` for the design.
 
 Three layers, mirroring the fire-comparison toolkit:
 
@@ -37,6 +37,7 @@ from .covariates import (
     temporal_covariate_on_grid,
 )
 from .frame import (
+    attach_fire_response,
     build_frame,
     load_completed_restoration_sites_in_analysis_crs,
     load_restoration_sites,
@@ -57,6 +58,8 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     avoided_area,
     build_panel,
     estimate_att,
+    fit_att,
+    prepare_panel,
     restrict_panel_to_matched,
 )
 from .climate import (  # GHCN station points -> gridded climate covariates
@@ -125,6 +128,7 @@ __all__ = [
     "load_covariate",
     "load_temporal_covariate",
     "temporal_covariate_on_grid",
+    "attach_fire_response",
     "build_frame",
     "load_completed_restoration_sites_in_analysis_crs",
     "load_restoration_sites",
@@ -165,6 +169,8 @@ __all__ = [
     "avoided_area",
     "build_panel",
     "estimate_att",
+    "fit_att",
+    "prepare_panel",
     "restrict_panel_to_matched",
     "add_matching_scores",
     "add_prognostic_score_series",
