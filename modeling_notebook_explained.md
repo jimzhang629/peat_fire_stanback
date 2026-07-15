@@ -93,6 +93,10 @@ Contents:
   - `climate.py` — GHCN station records → interpolated climate rasters
     ([M2](#m2--interpolating-station-climate-inverse-distance-weighting)).
   - `soil.py` — SSURGO soil polygons → rasterized soil covariates.
+    `build_soil_rasters` aggregates the *raw* relational SSURGO export
+    (`nc_soil_ssurgo.gpkg`); `build_soil_database_rasters` adds the two extra
+    layers carried on Cat's pre-aggregated `soil_database.gpkg`
+    (`soil_site_index`, `soil_water_table_depth`).
   - `matching.py` — pixel sets, covariate sampling, scores, and all matching
     ([M3](#m3--balance-and-the-standardized-mean-difference)–[M5](#m5--the-prognostic-score)).
   - `frame.py` — restoration-site loaders, `build_frame` (tidy pixel-year
@@ -150,6 +154,15 @@ Contents:
       right thing to match treated and control pixels on. A single year's
       weather is noise from the match's point of view (see
       [M8](#m8--where-does-time-go-static-vs-per-year-covariates)).
+  - The **growing-degree-days normal** (`gdd_normal`) is built the same way —
+    `build_climate_normals` with `climate.DEFAULT_GDD_ELEMENTS` — but off Cat's
+    monthly export `clim_monthly.gpkg` (`get_climate&soil_data_updated.R`)
+    instead of the daily frames. That file already carries a per-station-year
+    `totalGDD` (base-5 °C growing-season warmth, repeated across the year's 12
+    month rows), so the within-year reduce is a mean over duplicates and the
+    across-years mean is the normal. It has no `STATION` column and a lowercase
+    `year`, so the call passes `year_col="year"`. Being a stable site
+    characteristic, it too is a **static** match covariate.
   - `build_annual_climate(...)` → **temporal** covariates for the *outcome
     stage* (`precip`, `tmax`, `tmin`, one raster per year).
     - Same station → IDW path, but per calendar year: this year-specific
@@ -169,7 +182,16 @@ Contents:
     the grid: continuous layers (organic matter `om_r` — a fuel-load proxy;
     available water capacity `awc_r` — a moisture-retention proxy) and
     categorical ones (drainage class, factorized to codes and used as an
-    exact-match key, never as a numeric distance axis).
+    exact-match key, never as a numeric distance axis). These come from the
+    *raw* relational SSURGO export `nc_soil_ssurgo.gpkg`
+    (`get_climate&soil_data.R`).
+  - `build_soil_database_rasters(...)` then **augments** those with two more
+    continuous layers off Cat's *pre-aggregated* `soil_database.gpkg`
+    (`get_climate&soil_data_updated.R`): `soil_site_index` (forest
+    productivity, from `industrial`) and `soil_water_table_depth` (April–June
+    minimum, cm, from `wtdepaprjunmin`). These sit directly on the polygons, so
+    it is a thin wrapper over `build_soil_rasters` that needs no MUKEY
+    aggregation — run it *in addition to*, not instead of, `build_soil_rasters`.
 - Each build is wrapped in `try/except` so a missing input file skips that block
   instead of killing the notebook.
 - `plot_covariate_maps(...)` draws every static covariate over the AOI with
@@ -184,8 +206,9 @@ Contents:
 
 - Selects the matching axes from what's on disk:
   - `covariates` = every registered **continuous** covariate present
-    (elevation, histosol %, climate normals, soil organic matter/AWC) — these
-    become distance axes.
+    (elevation, histosol %, climate normals including the GDD normal, soil
+    organic matter/AWC, site index, water-table depth) — these become distance
+    axes.
   - `categorical` = every registered **categorical** covariate present
     (drainage class, land cover) — these become *exact-match* keys (class codes
     are labels, not magnitudes, so they don't belong in a distance; a treated
@@ -398,8 +421,10 @@ Contents:
 ### §4 — Fit + odds ratios
 
 - `fit_logit_clustered(frame, covariates=covs)` fits
-  `burned ~ treated + elevation + precip_normal + tmax_normal +
-  soil_organic_matter + soil_awc` (whichever are actually in the frame).
+  `burned ~ treated + elevation + precip_normal + tmax_normal + gdd_normal +
+  soil_organic_matter + soil_awc + soil_site_index + soil_water_table_depth`
+  (whichever are actually in the frame — selected against `frame.columns`, so a
+  layer that wasn't built in §1b is simply skipped).
   Internally:
   - standardizes continuous predictors for numerical stability,
   - reports actionable diagnoses for rank-deficiency or perfect separation,
@@ -851,8 +876,12 @@ way it is.
 - **Match on climate + soil, not elevation alone.** Histosol % is ~constant on
   the 80% frame, so `[elevation, histosol_pct]` was effectively an
   elevation-only match with trivially small distances balancing nothing. The
-  matchable set is every continuous layer on disk; drainage class and land
-  cover are exact-match keys.
+  matchable set is every continuous layer on disk — climate normals (precip,
+  tmax, tmin, GDD), soil organic matter/AWC, forest site index, water-table
+  depth; drainage class and land cover are exact-match keys. The GDD normal and
+  the soil site-index / water-table-depth layers come from Cat's analysis script
+  (`get_climate&soil_data_updated.R`) and were wired in alongside the raw-SSURGO
+  and daily-GHCN layers.
 - **Climate enters as a static long-run normal, IDW-interpolated from GHCN
   points** (M2); year-specific weather is a separate temporal covariate for the
   outcome stage (M8). IDW over kriging: transparent, dependency-light, never
