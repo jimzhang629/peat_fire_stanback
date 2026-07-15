@@ -299,11 +299,18 @@ get_ssurgo_fixed <- function(template, label, ...) {
 
 areanames <- paste0("NC", nc$COUNTYFP)
 
+## IMPORTANT: get_ssurgo writes its OWN cache to
+## <extraction.dir>/<label>_ssurgo.gpkg -- i.e. "<extraction.dir>/nc_soil_ssurgo.gpkg".
+## That must NOT be the same path as the curated GeoPackage we write below
+## (data/interim/soil/ssurgo/nc_soil_ssurgo.gpkg), or the two clobber each other:
+## on a later run get_ssurgo (force.redo = FALSE) reads our file back as its cache,
+## finds no "geometry" layer, and returns nc.soil$spatial = NULL. Keep FedData's
+## extraction cache in its own subdirectory so the two files never collide.
 nc.soil <- get_ssurgo_fixed(
   template = areanames,
   label = "nc_soil",
   raw.dir = "data/raw/soil/ssurgo",
-  extraction.dir = "data/interim/soil/ssurgo",
+  extraction.dir = "data/interim/soil/ssurgo/fed_cache",
   force.redo = FALSE
 )
 
@@ -320,6 +327,13 @@ nc.soil <- get_ssurgo_fixed(
 ## FedData's scattered per-table files and the Python side has nothing to read.
 soil_gpkg <- "data/interim/soil/ssurgo/nc_soil_ssurgo.gpkg"
 dir.create(dirname(soil_gpkg), recursive = TRUE, showWarnings = FALSE)
+
+## Fail loudly (and helpfully) if the download came back without polygons, rather
+## than hitting the cryptic "st_write applied to NULL" further down.
+if (is.null(nc.soil$spatial) || nrow(nc.soil$spatial) == 0) {
+  stop("get_ssurgo returned no spatial polygons (nc.soil$spatial is empty). ",
+       "Re-run with force.redo = TRUE, or check the SSURGO download.")
+}
 
 ## Polygon layer first (delete_dsn = TRUE starts the GeoPackage fresh).
 sf::st_write(nc.soil$spatial, soil_gpkg, layer = "mapunit_polys",
@@ -339,6 +353,9 @@ message("wrote SSURGO GeoPackage -> ", soil_gpkg)
 ############## Get Land Cover data across years of interest ####################
 ################################################################################
 
+## NOTE: NLCD Land Cover is released for specific epochs (2001, 2004, 2006,
+## 2008, 2011, 2013, 2016, 2019, 2021) -- there is no standalone 2020 product,
+## so 2019 is used as the nearest available epoch.
 nc.lc <- get_nlcd(
   template = nc,
   label = "nc_landcover",
