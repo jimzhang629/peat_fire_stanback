@@ -483,6 +483,21 @@ DEFAULT_CLIMATE_ELEMENTS: dict[str, dict] = {
 }
 
 
+# Growing degree days (base 5 C) normal, built with the same station -> annual
+# value -> IDW path as the temperature normals, but from Cat's monthly climate
+# export (clim_monthly.gpkg, get_climate&soil_data_updated.R) rather than the daily
+# GHCN frames. That file already carries a per-station-year `totalGDD` (repeated
+# across the year's 12 month rows), so the within-year reduce is a mean -- a no-op
+# over the duplicates that yields the year's GDD -- and the across-years mean gives
+# the growing-season-warmth normal. clim_monthly.gpkg has no STATION column, so
+# load_ghcn_stations falls back to a per-point id (its lowercase year column means
+# passing year_col="year"). A static site characteristic, so it registers in
+# covariates.COVARIATES (gdd_normal), not the per-year TEMPORAL_COVARIATES.
+DEFAULT_GDD_ELEMENTS: dict[str, dict] = {
+    "gdd_normal": {"value_col": "totalGDD", "annual_reduce": "mean"},
+}
+
+
 def build_climate_normals(
     records_by_element: Mapping[str, gpd.GeoDataFrame],
     aoi: gpd.GeoDataFrame,
