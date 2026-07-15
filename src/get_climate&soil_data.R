@@ -342,7 +342,7 @@ message("wrote SSURGO GeoPackage -> ", soil_gpkg)
 nc.lc <- get_nlcd(
   template = nc,
   label = "nc_landcover",
-  year = 2020,
+  year = 2019,
   dataset = "landcover",
   extraction.dir = "data/interim/land_cover/nlcd",
   force.redo = FALSE
