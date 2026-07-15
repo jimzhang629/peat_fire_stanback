@@ -135,6 +135,13 @@ clim <- left_join(gdd, meanmax) %>%
 
 clim <- st_as_sf(clim, sf_column_name = "geometry")
 
+### Save the combined monthly climate table (GDD, mean temps, growing-season precip).
+## GeoPackage keeps the station point geometry so it can be read in Python/geopandas.
+dir.create("data/interim/climate/ghcn", recursive = TRUE, showWarnings = FALSE)
+sf::st_write(clim, "data/interim/climate/ghcn/clim_monthly.gpkg",
+             delete_dsn = TRUE, quiet = TRUE)
+message("wrote climate table -> data/interim/climate/ghcn/clim_monthly.gpkg")
+
 
 ################################################################################
 ################################################################################
@@ -209,6 +216,12 @@ pdsi_results <- pdsi %>%
   dplyr::select(-MONTH, -YEAR)
 
 pdsi_results <- st_as_sf(pdsi_results)
+
+### Save the scPDSI drought results (one row per station-month, with geometry).
+dir.create("data/interim/climate/ghcn", recursive = TRUE, showWarnings = FALSE)
+sf::st_write(pdsi_results, "data/interim/climate/ghcn/pdsi_results.gpkg",
+             delete_dsn = TRUE, quiet = TRUE)
+message("wrote scPDSI drought table -> data/interim/climate/ghcn/pdsi_results.gpkg")
 
 
 #### Jim - you will have to link up the pdsi_results on line 195 and the clim on lines 109-120
@@ -429,6 +442,15 @@ soil_database <- soil.spatial %>%
   distinct() %>%
   select(musym, mukey, geom, muname, wtdepaprjunmin, numacres, industrial, awc)
 
+### Save the cleaned, aggregated soil database (one row per map-unit polygon).
+## NOTE: this is Cat's *pre-aggregated* soil table -- it is NOT the raw relational
+## SSURGO export that src/peatfire/modeling/soil.py reads (that one is written by
+## get_climate&soil_data.R as nc_soil_ssurgo.gpkg). Different file, different shape.
+dir.create("data/interim/soil/ssurgo", recursive = TRUE, showWarnings = FALSE)
+sf::st_write(soil_database, "data/interim/soil/ssurgo/soil_database.gpkg",
+             delete_dsn = TRUE, quiet = TRUE)
+message("wrote soil database -> data/interim/soil/ssurgo/soil_database.gpkg")
+
 ### Use the SSURGO Metadata Table for more information: 
 # https://www.nrcs.usda.gov/sites/default/files/2022-08/SSURGO-Metadata-Table-Column-Descriptions-Report.pdf
 
@@ -458,6 +480,12 @@ nc.lc <- get_nlcd(
   dataset = "landcover",
   force.redo = TRUE
 )
+
+### Save the land cover raster as a GeoTIFF.
+dir.create("data/interim/land_cover/nlcd", recursive = TRUE, showWarnings = FALSE)
+terra::writeRaster(nc.lc, "data/interim/land_cover/nlcd/nc_landcover_2019.tif",
+                   overwrite = TRUE)
+message("wrote land cover raster -> data/interim/land_cover/nlcd/nc_landcover_2019.tif")
 
 
 
