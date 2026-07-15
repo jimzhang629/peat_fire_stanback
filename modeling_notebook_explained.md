@@ -790,8 +790,7 @@ stages, and one deliberate flattening happens upstream.*
   (`precip_normal` ≠ `precip`; both exist side by side).
 - **§2c trajectory match — the time series used literally.** Cohort $g$'s
   matching vector is
-  $\big(\text{fire}_{g-1},\, \text{fire}_{g-2},\, \text{fire}_{2015},\,
-  \hat p_{g},\, \hat p_{g+1},\, \dots,\, \hat p_{2024},\, \text{psm}_g\big)$ —
+  $\big(\text{fire}_{g-1},\, \text{fire}_{g-2},\, \text{fire}_{2015},\, \hat p_{g},\, \hat p_{g+1},\, \dots,\, \hat p_{2024},\, \text{psm}_g\big)$ —
   pre-treatment burn history plus the pixel's predicted-risk path, one
   coordinate per year. Mahalanobis distance over this vector compares **whole
   trajectories**: two pixels match only if their risk moved through the dry and
