@@ -97,13 +97,18 @@ saveRDS(nc.prcp, "data/interim/climate/ghcn/nc_prcp_long.Rds")
 `saveRDS(object, "path")` writes one R object to a compact `.Rds` file (reload with
 `readRDS`). It returns nothing useful — it runs for the side effect of creating the file.
 
-### Drought index (scPDSI) — lines 88–153
+### Drought index (scPDSI) — lines 86–165
 
 - `totalprcp` — monthly precip totals per station (`group_by` then `summarize(sum)`).
-- `pdsi_in` — joins monthly precip + mean temps + station latitude, then computes **PET**
-  (atmospheric "thirst") with `hargreaves(TMIN, TMAX, lat)`.
+- `pdsi_in` (first pass) — joins monthly precip + mean temps + station latitude and
+  restricts to the 2000–2026 window. **No PET yet.**
 - `complete(YEAR = 2000:2026, MONTH = 1:12)` — inserts missing rows so each station has a
-  gap-free monthly series (the drought model requires it).
+  gap-free, ordered monthly series starting at January 2000 (the drought model requires it).
+- **PET last, once per station.** Only *after* the series is gap-filled does the script
+  compute **PET** (atmospheric "thirst") with `hargreaves(Tmin, Tmax, lat)`. This ordering
+  matters: `hargreaves()` treats its input as one monthly series beginning in January, so it
+  must see each station's full, contiguous 12-month cycle in order — not a month at a time.
+  A single scalar `latitude` is passed because every row of a station shares one location.
 - `run_scpdsi` — the per-station function, in [the shared drought section](#shared-the-drought-function).
 - `pdsi_results` — runs it per station, stacks, re-attaches geometry.
 
@@ -295,10 +300,19 @@ clim <- left_join(gdd, meanmax) %>% left_join(meanmin) %>% left_join(gsprcp) %>%
 > **💾 Added:** `clim` → `data/interim/climate/ghcn/clim_monthly.gpkg` — a GeoPackage so
 > Python/geopandas can read it. This file supplies the model's **growing-degree-days** layer.
 
-### Drought — lines 150–218
+### Drought — lines 146–224
 
-Same [drought function](#shared-the-drought-function) and per-station run. One difference:
-this version keeps a `month.year` string (`"2005 July"`) instead of clean YEAR/MONTH columns.
+Same [drought function](#shared-the-drought-function) and per-station run, with two
+differences from the pipeline script:
+
+- **PET timing.** This script computes `hargreaves(...)` inside a
+  `group_by(STATION, YEAR, MONTH)` — i.e. one month at a time — *before* `complete()`
+  gap-fills the series. The pipeline script was later fixed to compute PET once over the
+  full, ordered, gap-filled monthly series (see the pipeline drought section). If you rely
+  on this file's PDSI, prefer the pipeline's; the model already reads the pipeline's
+  `nc_pdsi_long.Rds`, so this discrepancy doesn't reach the covariates.
+- **Output shape.** It keeps a `month.year` string (`"2005 July"`) instead of clean
+  YEAR/MONTH columns.
 
 > **💾 Added:** `pdsi_results` → `data/interim/climate/ghcn/pdsi_results.gpkg`. *(The model
 > actually uses the pipeline's PDSI file, so this one is an extra.)*
