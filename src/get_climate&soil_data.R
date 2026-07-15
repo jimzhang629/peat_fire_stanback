@@ -339,10 +339,13 @@ message("wrote SSURGO GeoPackage -> ", soil_gpkg)
 ############## Get Land Cover data across years of interest ####################
 ################################################################################
 
+## NOTE: NLCD Land Cover is released for specific epochs (2001, 2004, 2006,
+## 2008, 2011, 2013, 2016, 2019, 2021) -- there is no standalone 2020 product,
+## so 2019 is used as the nearest available epoch.
 nc.lc <- get_nlcd(
   template = nc,
   label = "nc_landcover",
-  year = 2020,
+  year = 2019,
   dataset = "landcover",
   extraction.dir = "data/interim/land_cover/nlcd",
   force.redo = FALSE
