@@ -120,6 +120,25 @@ def _col_ci(df, name: str) -> Optional[str]:
     return normalized.get(_norm(name))
 
 
+def _mukey_str(values) -> np.ndarray:
+    """Canonical string form of a MUKEY (or MUKEY-like key) column, for joins.
+
+    SSURGO's polygon layer stores ``MUKEY`` as an integer string (``'111607'``),
+    but the relational attribute tables (``component``, ``chorizon``) read back as
+    ``float64``, so a plain ``astype(str)`` turns the *same* key into ``'111607.0'``
+    on one side and ``'111607'`` on the other -- and the per-MUKEY values never
+    rejoin to the polygons (every ``.map`` misses). Route both sides through a
+    nullable integer so the fractional ``.0`` is dropped and the two forms collapse
+    to one ``'111607'``; fall back to the stripped raw string for any genuinely
+    non-numeric key so nothing is silently lost.
+    """
+    s = pd.Series(values)
+    num = pd.to_numeric(s, errors="coerce")
+    ints = num.round().astype("Int64").astype("string")     # 111607.0 -> '111607'
+    out = ints.where(num.notna(), s.astype("string").str.strip())
+    return out.to_numpy()
+
+
 @functools.lru_cache(maxsize=None)
 def _readable_gpkg(gpkg_path: str) -> str:
     """Return a path to the GeoPackage that GDAL can reliably open.
@@ -270,7 +289,7 @@ def mukey_attribute(
                 series = dom.set_index(comp_mukey)[comp_col].astype(str)
             else:
                 series = _weighted_mean_by(comp, comp_mukey, comp_col, comp_pct)
-            series.index = series.index.astype(str)
+            series.index = pd.Index(_mukey_str(series.index))
             return series, "component"
 
     # 2) chorizon table (needs component to reach a map unit) ----------------
@@ -307,7 +326,7 @@ def mukey_attribute(
             c["_v"] = comp[comp_cokey].astype(str).map(per_comp_by_str)
             c["_pct"] = comp[comp_pct]
             series = _weighted_mean_by(c.dropna(subset=["_v"]), comp_mukey, "_v", "_pct")
-            series.index = series.index.astype(str)
+            series.index = pd.Index(_mukey_str(series.index))
             return series, "chorizon"
 
     # 3) already per-map-unit tables (muaggatt, mapunit) ---------------------
@@ -323,7 +342,7 @@ def mukey_attribute(
                 s = pd.to_numeric(s, errors="coerce").dropna()
             else:
                 s = s.astype(str)
-            s.index = s.index.astype(str)
+            s.index = pd.Index(_mukey_str(s.index))
             return s, name
 
     return None, None
@@ -514,7 +533,8 @@ def build_soil_rasters(
                 )
                 continue
             burn_col = f"_soil_{name}"
-            gdf[burn_col] = gdf[mukey_col].astype(str).map(series)
+            poly_mukey = pd.Series(_mukey_str(gdf[mukey_col]), index=gdf.index)
+            gdf[burn_col] = poly_mukey.map(series)
             matched = int(gdf[burn_col].notna().sum())
             if matched == 0:
                 print(
