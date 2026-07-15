@@ -380,7 +380,7 @@ areanames <- paste0("NC", nc$COUNTYFP)
 
 nc.soil <- get_ssurgo_fixed(
   template = areanames, 
-  label = "nc_soil", force.redo = TRUE
+  label = "nc_soil", force.redo = FALSE
 )
 
 #### Added 10 July 2026 by Cat
@@ -456,7 +456,7 @@ nc.lc <- get_nlcd(
   ## User can only select one year at a time
   year = 2019, 
   dataset = "landcover",
-  force.redo = TRUE
+  force.redo = FALSE
 )
 
 
