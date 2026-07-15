@@ -13,6 +13,10 @@ The functions, in pipeline order:
   over NC (the "does this layer have coverage and spatial signal?" check). This is
   where a covariate that is *constant* -- histosol %, pinned near 90 across the
   peat frame -- shows itself as a flat map, i.e. nothing to match on.
+* :func:`plot_temporal_covariate_by_year` -- the per-year counterpart of the
+  above for a *temporal* covariate (``pdsi`` / ``precip`` / ...): one panel per
+  year on a shared, zero-centred scale, so the drought / dry-year signal the DiD
+  stage keys off is visible (``plot_covariate_maps`` only maps the static layers).
 * :func:`plot_covariate_space` -- treated vs control pixels in a 2-D covariate
   plane, with marginal histograms. A covariate with no spread collapses its axis
   to a line; this is the direct picture of "we are effectively matching on
@@ -60,6 +64,7 @@ from typing import Optional, Sequence
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import TwoSlopeNorm
 import pandas as pd
 
 from ..fire_products_comparison.fire_comparison import ANALYSIS_CRS, build_common_grid
@@ -68,8 +73,10 @@ from .covariates import (
     COVARIATES,
     TEMPORAL_COVARIATES,
     available_covariates,
+    available_temporal_covariates,
     covariate_on_grid,
     get_covariate,
+    temporal_covariate_on_grid,
 )
 from .frame import DEFAULT_RES_M
 
@@ -216,6 +223,166 @@ def plot_covariate_maps(
     for ax in axes_flat[len(names):]:  # blank any unused panels
         ax.set_axis_off()
     fig.suptitle("Covariate coverage over the peat AOI", y=1.0)
+    return fig
+
+
+def plot_temporal_covariate_by_year(
+    aoi: gpd.GeoDataFrame,
+    name: str,
+    years: Sequence[int],
+    res_m: float = DEFAULT_RES_M,
+    ncols: int = 3,
+    treated: Optional[gpd.GeoDataFrame] = None,
+    aoi_context: Optional[gpd.GeoDataFrame] = None,
+    cmap: Optional[str] = None,
+    center: Optional[float] | str = "auto",
+    robust: bool = True,
+):
+    """Map one *per-year* (temporal) covariate across ``years``, one panel each.
+
+    The temporal counterpart of :func:`plot_covariate_maps`: that function maps the
+    *static* covariates in ``COVARIATES`` (the geographic-match layers), so the
+    year-specific weather in ``TEMPORAL_COVARIATES`` -- ``precip`` / ``tmax`` /
+    ``tmin`` / ``pdsi`` -- never appears there. This draws one of them across the
+    panel years so you can *see* the drought / dry-year signal the DiD stage keys
+    off (e.g. a ``treated:pdsi`` interaction).
+
+    Every year is warped onto the same grid and drawn on **one shared color scale**
+    so panels are comparable across years -- a wet year and a dry year sit on the
+    same axis. For a signed, zero-centered index like scPDSI the scale is made
+    symmetric about ``center`` (default ``"auto"`` picks 0 when the data straddle
+    it) and defaults to the diverging ``RdBu`` colormap (red = drought/negative,
+    blue = wet/positive); an unsigned layer like ``precip`` falls back to a robust
+    ``viridis`` scale.
+
+    Parameters
+    ----------
+    aoi : GeoDataFrame
+        Area to build the grid over and clip to (e.g. the 80% peat frame).
+    name : str
+        A temporal covariate name (must be in ``TEMPORAL_COVARIATES``), e.g.
+        ``"pdsi"``, ``"precip"``.
+    years : sequence of int
+        Calendar years to draw; a year with no raster on disk is skipped.
+    treated, aoi_context : GeoDataFrame, optional
+        Restoration polygons / extra outline to draw on each panel, as in
+        :func:`plot_covariate_maps`.
+    cmap : str, optional
+        Override the colormap. Defaults to ``"RdBu"`` when centered, else
+        ``"viridis"``.
+    center : float or ``"auto"`` or None
+        Diverging midpoint. ``"auto"`` (default) centers on 0 when the data span
+        both signs (the scPDSI case) and is off otherwise; a float forces a
+        centered symmetric scale; ``None`` disables centering.
+    robust : bool
+        Clip the color scale to the 2nd/98th percentile (symmetric 98th of the
+        absolute value when centered) instead of the raw min/max.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    if name not in TEMPORAL_COVARIATES:
+        raise KeyError(
+            f"{name!r} is not a temporal covariate; choose one of "
+            f"{sorted(TEMPORAL_COVARIATES)}"
+        )
+    set_fire_style()
+    grid = build_common_grid(aoi, res_m=res_m)
+
+    # Load every year up front so we can fix a single scale shared by all panels.
+    layers = {
+        year: temporal_covariate_on_grid(name, grid, aoi, year) for year in years
+    }
+    layers = {year: da for year, da in layers.items() if da is not None}
+    if not layers:
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.text(
+            0.5, 0.5, f"{name}\n(no rasters on disk for {list(years)})",
+            ha="center", va="center",
+        )
+        ax.set_axis_off()
+        return fig
+
+    finite_vals = np.concatenate(
+        [da.values[np.isfinite(da.values)].astype("float64").ravel()
+         for da in layers.values()]
+    )
+    has_signal = finite_vals.size > 0
+
+    # Resolve the shared scale: symmetric about `center` for a signed index,
+    # a plain robust range otherwise.
+    if center == "auto":
+        center = 0.0 if (has_signal and finite_vals.min() < 0 < finite_vals.max()) else None
+    norm = None
+    if center is not None and has_signal:
+        if robust:
+            vabs = float(np.nanpercentile(np.abs(finite_vals - center), 98)) or 1.0
+        else:
+            vabs = float(np.nanmax(np.abs(finite_vals - center))) or 1.0
+        vmin, vmax = center - vabs, center + vabs
+        norm = TwoSlopeNorm(vcenter=center, vmin=vmin, vmax=vmax)
+        this_cmap = cmap or "RdBu"
+    else:
+        if has_signal and robust:
+            vmin, vmax = (float(v) for v in np.nanpercentile(finite_vals, [2, 98]))
+        elif has_signal:
+            vmin, vmax = float(finite_vals.min()), float(finite_vals.max())
+        else:
+            vmin, vmax = 0.0, 1.0
+        if vmin == vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+        this_cmap = cmap or "viridis"
+
+    nrows = int(np.ceil(len(layers) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False,
+        layout="constrained",   # places the shared colorbar without overlap
+    )
+    axes_flat = axes.ravel()
+
+    im = None
+    for ax, (year, da) in zip(axes_flat, sorted(layers.items())):
+        vals = da.values.astype("float64")
+        finite = np.isfinite(vals)
+        left, bottom, right, top = da.rio.bounds()
+        im = ax.imshow(
+            np.where(finite, vals, np.nan),
+            extent=[left, right, bottom, top], origin="upper",
+            cmap=this_cmap, norm=norm,
+            vmin=None if norm is not None else vmin,
+            vmax=None if norm is not None else vmax,
+            interpolation="nearest",
+        )
+        aoi.to_crs(grid.rio.crs).dissolve().boundary.plot(
+            ax=ax, color="black", linewidth=0.5, alpha=0.5, zorder=3
+        )
+        if treated is not None:
+            treated.to_crs(grid.rio.crs).boundary.plot(
+                ax=ax, color=TREATED_COLOR, linewidth=0.9, zorder=4
+            )
+        if aoi_context is not None:
+            aoi_context.to_crs(grid.rio.crs).boundary.plot(
+                ax=ax, color="0.4", linewidth=0.7, zorder=2
+            )
+        ax.set_xlim(left, right)
+        ax.set_ylim(bottom, top)
+        ax.set_aspect("equal")
+        ax.set_title(f"{name} {year}")
+        ax.set_xlabel("x (m)")
+        ax.set_ylabel("y (m)")
+
+    for ax in axes_flat[len(layers):]:  # blank any unused panels
+        ax.set_axis_off()
+
+    # One shared colorbar down the right -- the whole point is a common scale.
+    if im is not None:
+        fig.colorbar(
+            im, ax=axes.ravel().tolist(), location="right",
+            shrink=0.85, aspect=40,
+        )
+    diverging = " (red = drought, blue = wet)" if norm is not None else ""
+    fig.suptitle(f"{name} by year{diverging}")
     return fig
 
 

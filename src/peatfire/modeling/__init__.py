@@ -92,6 +92,7 @@ from .plotting import (  # step-by-step data-inspection diagnostics
     plot_raw_burn_rate_by_year,
     plot_score_map,
     plot_score_overlap,
+    plot_temporal_covariate_by_year,
 )
 from .matching import (  # assignment scaffold (Part A stubs) + test harness (Part B)
     add_matching_scores,
@@ -158,6 +159,7 @@ __all__ = [
     "plot_raw_burn_rate_by_year",
     "plot_score_map",
     "plot_score_overlap",
+    "plot_temporal_covariate_by_year",
     "coefficients",
     "drainage_effect_table",
     "fit_drainage_models",
