@@ -73,6 +73,7 @@ from .climate import (  # GHCN station points -> gridded climate covariates
 )
 from .soil import (  # SSURGO soil polygons -> gridded soil covariates
     build_soil_rasters,
+    build_soil_database_rasters,
     inspect_soil_columns,
     mukey_attribute,
 )
@@ -140,6 +141,7 @@ __all__ = [
     "write_annual_climate",
     "write_climate_normals",
     "build_soil_rasters",
+    "build_soil_database_rasters",
     "inspect_soil_columns",
     "mukey_attribute",
     "plot_candidate_control_pixels",

@@ -458,8 +458,7 @@ $$\mathrm{ATT} = \mathbb{E}\left[\,Y(1) - Y(0) \mid D = 1\,\right]$$
   grid cell. `idw_to_grid` predicts at grid location $s$ from the $k$ nearest
   stations:
 
-$$\hat{z}(s) = \frac{\sum_{i=1}^{k} w_i\, z_i}{\sum_{i=1}^{k} w_i},
-\qquad w_i = \frac{1}{d(s, s_i)^{p}}$$
+$$\hat{z}(s) = \frac{\sum_{i=1}^{k} w_i\, z_i}{\sum_{i=1}^{k} w_i}, \qquad w_i = \frac{1}{d(s, s_i)^{p}}$$
 
   with $d$ the distance to station $i$ (EPSG:5070 metres, found via a KD-tree)
   and power $p$ (default 2). Closer stations dominate; a station exactly at $s$
@@ -480,8 +479,7 @@ $$\hat{z}(s) = \frac{\sum_{i=1}^{k} w_i\, z_i}{\sum_{i=1}^{k} w_i},
   covariate distributions. The per-covariate summary is the **standardized mean
   difference**:
 
-$$\mathrm{SMD} = \frac{\bar{x}_{\text{treated}} - \bar{x}_{\text{control}}}
-{\sqrt{\left(s_{\text{treated}}^2 + s_{\text{control}}^2\right)/2}}$$
+$$\mathrm{SMD} = \frac{\bar{x}_{\text{treated}} - \bar{x}_{\text{control}}} {\sqrt{\left(s_{\text{treated}}^2 + s_{\text{control}}^2\right)/2}}$$
 
   — the group mean gap in **pooled standard deviation units**, so it is
   comparable across covariates with different scales and unaffected by sample
@@ -620,8 +618,7 @@ $$\Psi(X) = \mathbb{E}\left[\,Y(0) \mid X\,\right]$$
 
 - **The model** (Route 2's estimator). With $p = \Pr(\text{burned}=1)$:
 
-$$\log\frac{p}{1-p} = \beta_0 + \beta_T\,\text{treated} + \beta^\top X
-\quad\Longleftrightarrow\quad p = \frac{1}{1 + e^{-\eta}}$$
+$$\log\frac{p}{1-p} = \beta_0 + \beta_T\,\text{treated} + \beta^\top X \quad\Longleftrightarrow\quad p = \frac{1}{1 + e^{-\eta}}$$
 
   fit by maximum likelihood on the matched pixel-year frame.
 - **Odds ratios.** Exponentiating a coefficient gives a multiplicative effect on
@@ -643,8 +640,7 @@ $$\log\frac{p}{1-p} = \beta_0 + \beta_T\,\text{treated} + \beta^\top X
   The **cluster-robust (sandwich) estimator** fixes the variance without
   changing the coefficients:
 
-$$\widehat{\mathrm{Var}}(\hat\beta) = A^{-1} \left( \sum_{g=1}^{G} s_g s_g^\top \right) A^{-1},
-\qquad s_g = \sum_{i \in \text{cluster } g} \frac{\partial \ell_i}{\partial \beta}$$
+$$\widehat{\mathrm{Var}}(\hat\beta) = A^{-1} \left( \sum_{g=1}^{G} s_g s_g^\top \right) A^{-1}, \qquad s_g = \sum_{i \in \text{cluster } g} \frac{\partial \ell_i}{\partial \beta}$$
 
   where $A$ is the usual information matrix and $s_g$ sums each cluster's score
   contributions. Errors may correlate arbitrarily *within* a cluster; only
@@ -667,9 +663,7 @@ pipeline actually runs.*
 - **The canonical 2×2.** One treated group, one control group, one pre and one
   post period:
 
-$$\widehat{\mathrm{ATT}} =
-\underbrace{\left(\bar{Y}^{\text{treat}}_{\text{post}} - \bar{Y}^{\text{treat}}_{\text{pre}}\right)}_{\text{change in treated}}
-- \underbrace{\left(\bar{Y}^{\text{ctrl}}_{\text{post}} - \bar{Y}^{\text{ctrl}}_{\text{pre}}\right)}_{\text{change in controls}}$$
+$$\widehat{\mathrm{ATT}} = \underbrace{\left(\bar{Y}^{\text{treat}}_{\text{post}} - \bar{Y}^{\text{treat}}_{\text{pre}}\right)}_{\text{change in treated}} - \underbrace{\left(\bar{Y}^{\text{ctrl}}_{\text{post}} - \bar{Y}^{\text{ctrl}}_{\text{pre}}\right)}_{\text{change in controls}}$$
 
   Worked example: treated pixels burn at 10% before restoration and 4% after;
   controls burn at 8% then 6% over the same years (a wetter period everywhere).
@@ -702,8 +696,7 @@ $$\mathrm{ATT}(g, t) = \mathbb{E}\left[\,Y_t(g) - Y_t(0) \mid G = g\,\right]$$
   outcome *change* since its last untreated year ($g-1$, the base period)
   against the same change among clean controls:
 
-$$\mathrm{ATT}(g, t) = \mathbb{E}\left[\,Y_t - Y_{g-1} \mid G = g\,\right]
-- \mathbb{E}\left[\,Y_t - Y_{g-1} \mid \text{control at } t\,\right]$$
+$$\mathrm{ATT}(g, t) = \mathbb{E}\left[\,Y_t - Y_{g-1} \mid G = g\,\right] - \mathbb{E}\left[\,Y_t - Y_{g-1} \mid \text{control at } t\,\right]$$
 
   where "control at $t$" means never-treated pixels (and, configurably,
   not-yet-treated cohorts with $g' > t$ — pixels that will be restored later
@@ -721,14 +714,7 @@ $$\mathrm{ATT}(g, t) = \mathbb{E}\left[\,Y_t - Y_{g-1} \mid G = g\,\right]
   $\hat m_{g,t}(X) = \widehat{\mathbb{E}}[\Delta Y \mid X, C=1]$ and a
   propensity model $\hat e_g(X) = \widehat{\Pr}(G_g = 1 \mid X)$:
 
-$$\widehat{\mathrm{ATT}}(g,t) = \mathbb{E}_n\!\left[
-\left(
-\underbrace{\frac{G_g}{\mathbb{E}_n[G_g]}}_{\text{treated weight}}
--
-\underbrace{\frac{\dfrac{\hat e_g(X)\,C}{1 - \hat e_g(X)}}{\mathbb{E}_n\!\left[\dfrac{\hat e_g(X)\,C}{1-\hat e_g(X)}\right]}}_{\text{reweighted controls}}
-\right)
-\left(\Delta Y - \hat m_{g,t}(X)\right)
-\right]$$
+$$\widehat{\mathrm{ATT}}(g,t) = \mathbb{E}_n\!\left[ \left( \underbrace{\frac{G_g}{\mathbb{E}_n[G_g]}}_{\text{treated weight}} - \underbrace{\frac{\dfrac{\hat e_g(X)\,C}{1 - \hat e_g(X)}}{\mathbb{E}_n\!\left[\dfrac{\hat e_g(X)\,C}{1-\hat e_g(X)}\right]}}_{\text{reweighted controls}} \right) \left(\Delta Y - \hat m_{g,t}(X)\right) \right]$$
 
   In words, three ideas stacked:
   1. **Outcome regression** alone would predict each treated pixel's
@@ -804,8 +790,7 @@ stages, and one deliberate flattening happens upstream.*
   (`precip_normal` ≠ `precip`; both exist side by side).
 - **§2c trajectory match — the time series used literally.** Cohort $g$'s
   matching vector is
-  $\big(\text{fire}_{g-1},\, \text{fire}_{g-2},\, \text{fire}_{2015},\,
-  \hat p_{g},\, \hat p_{g+1},\, \dots,\, \hat p_{2024},\, \text{psm}_g\big)$ —
+  $\big(\text{fire}_{g-1},\, \text{fire}_{g-2},\, \text{fire}_{2015},\, \hat p_{g},\, \hat p_{g+1},\, \dots,\, \hat p_{2024},\, \text{psm}_g\big)$ —
   pre-treatment burn history plus the pixel's predicted-risk path, one
   coordinate per year. Mahalanobis distance over this vector compares **whole
   trajectories**: two pixels match only if their risk moved through the dry and

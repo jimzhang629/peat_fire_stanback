@@ -24,12 +24,12 @@ library(scPDSI)
 # shapefile from the final dataset
 
 ## Counties in NC Coastal Plain
-counties <- c("Beaufort", "Bertie", "Bladen") #, "Brunswick", "Camden", "Carteret", "Chowan",
-              #"Columbus", "Craven", "Cumberland", "Currituck", "Dare", "Duplin", "Edgecombe",
-              #"Gates", "Greene", "Halifax", "Harnett", "Hertford", "Hoke", "Hyde", "Johnston",
-              #"Jones", "Lenoir", "Martin", "Nash", "New Hanover", "Northampton", "Onslow",
-              #"Pamlico", "Pasquotank", "Pender", "Perquimans", "Pitt", "Robeson", "Sampson", 
-              #"Scotland", "Tyrrell", "Wayne", "Wilson")
+counties <- c("Beaufort", "Bertie", "Bladen", "Brunswick", "Camden", "Carteret", "Chowan",
+              "Columbus", "Craven", "Cumberland", "Currituck", "Dare", "Duplin", "Edgecombe",
+              "Gates", "Greene", "Halifax", "Harnett", "Hertford", "Hoke", "Hyde", "Johnston",
+              "Jones", "Lenoir", "Martin", "Nash", "New Hanover", "Northampton", "Onslow",
+              "Pamlico", "Pasquotank", "Pender", "Perquimans", "Pitt", "Robeson", "Sampson",
+              "Scotland", "Tyrrell", "Wayne", "Wilson")
 
 ### Load shapefile of North Carolina Coastal Plain
 nc <- counties(state = "North Carolina") %>%
