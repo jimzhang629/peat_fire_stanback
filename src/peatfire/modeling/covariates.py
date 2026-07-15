@@ -153,6 +153,17 @@ COVARIATES: dict[str, CovariateSpec] = {
         native_res_m=300.0,
         source="GHCN daily TMIN normal, IDW-interpolated (modeling.climate).",
     ),
+    "gdd_normal": CovariateSpec(
+        name="gdd_normal",
+        role="continuous",
+        # /data/processed/climate/gdd_normal_nc.tif  (mean annual growing degree
+        # days, base 5 C). Growing-season warmth as a static site characteristic.
+        root_parts=("processed", "climate"),
+        glob="gdd_normal_nc.tif",
+        native_res_m=300.0,
+        source="GHCN growing degree days (base 5C) normal, IDW-interpolated from "
+        "clim_monthly.gpkg (get_climate&soil_data_updated.R).",
+    ),
     # --- SSURGO soil properties (gridded rasters on disk) -----------------------
     # gSSURGO map-unit properties rasterised to 30 m. Continuous properties are
     # area-averaged onto the grid; drainage class is categorical (majority class).
@@ -184,6 +195,27 @@ COVARIATES: dict[str, CovariateSpec] = {
         glob="ssurgo_drainage_class*_nc.tif",
         native_res_m=30.0,
         source="gSSURGO drainage class (drainagecl), coded ordinal -> majority class.",
+    ),
+    # --- extra soil properties from Cat's aggregated soil_database.gpkg ----------
+    # Built by soil.build_soil_database_rasters from soil_database.gpkg
+    # (get_climate&soil_data_updated.R). These augment the raw-SSURGO layers above.
+    "soil_site_index": CovariateSpec(
+        name="soil_site_index",
+        role="continuous",
+        # /data/processed/soil/ssurgo/ssurgo_site_index_nc.tif
+        root_parts=("processed", "soil", "ssurgo"),
+        glob="ssurgo_site_index*_nc.tif",
+        native_res_m=30.0,
+        source="SSURGO site index (coforprod.siteindex.r), forest-productivity proxy.",
+    ),
+    "soil_water_table_depth": CovariateSpec(
+        name="soil_water_table_depth",
+        role="continuous",
+        # /data/processed/soil/ssurgo/ssurgo_water_table_depth_nc.tif  (cm)
+        root_parts=("processed", "soil", "ssurgo"),
+        glob="ssurgo_water_table_depth*_nc.tif",
+        native_res_m=30.0,
+        source="SSURGO water-table depth, Apr-Jun min (muaggatt.wtdepaprjunmin), cm.",
     ),
     # --- not yet downloaded: registered so they attach automatically later ---
     "land_cover": CovariateSpec(

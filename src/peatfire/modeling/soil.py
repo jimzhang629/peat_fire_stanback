@@ -81,6 +81,23 @@ DEFAULT_SOIL_ATTRIBUTES: dict[str, dict] = {
     },
 }
 
+# Extra soil properties carried on Cat's aggregated soil_database.gpkg
+# (get_climate&soil_data_updated.R). Unlike the raw SSURGO export, this file is
+# already one row per map-unit polygon with the properties joined on, so these
+# columns sit *directly* on the polygon layer -- build_soil_rasters finds them in
+# `gdf.columns` and needs no MUKEY aggregation. These augment (do not replace) the
+# DEFAULT_SOIL_ATTRIBUTES above, which still come from the raw nc_soil_ssurgo.gpkg.
+SOIL_DATABASE_ATTRIBUTES: dict[str, dict] = {
+    "soil_site_index": {
+        "column": "industrial", "role": "continuous",
+        "filename": "ssurgo_site_index_nc.tif",
+    },
+    "soil_water_table_depth": {
+        "column": "wtdepaprjunmin", "role": "continuous",
+        "filename": "ssurgo_water_table_depth_nc.tif",
+    },
+}
+
 
 def _col_ci(df, name: str) -> Optional[str]:
     """Return ``df``'s column matching ``name`` case-insensitively, or ``None``.
@@ -516,3 +533,30 @@ def build_soil_rasters(
             msg += f"; classes {legend}"
         print(msg)
     return written
+
+
+def build_soil_database_rasters(
+    gpkg_path=None,
+    aoi: gpd.GeoDataFrame = None,
+    res_m: float = 300.0,
+    out_dir: Optional[Path] = None,
+) -> dict[str, Path]:
+    """Rasterise the extra soil properties carried on Cat's ``soil_database.gpkg``.
+
+    Thin wrapper over :func:`build_soil_rasters` with
+    :data:`SOIL_DATABASE_ATTRIBUTES` and a default path of
+    ``interim/soil/ssurgo/soil_database.gpkg`` (written by
+    ``get_climate&soil_data_updated.R``). Adds ``soil_site_index`` +
+    ``soil_water_table_depth`` as covariate GeoTIFFs alongside the raw-SSURGO
+    organic matter / AWC / drainage layers -- run it in addition to
+    :func:`build_soil_rasters`, not instead of it.
+    """
+    if gpkg_path is None:
+        gpkg_path = data_path("interim", "soil", "ssurgo", "soil_database.gpkg")
+    return build_soil_rasters(
+        gpkg_path=gpkg_path,
+        aoi=aoi,
+        attributes=SOIL_DATABASE_ATTRIBUTES,
+        res_m=res_m,
+        out_dir=out_dir,
+    )
