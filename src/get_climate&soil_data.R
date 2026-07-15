@@ -103,25 +103,37 @@ totalprcp <- nc.prcp %>%
   group_by(STATION, YEAR, MONTH) %>%
   summarize(PRCP = sum(PRCP, na.rm = TRUE), .groups = "drop")
 
-## Join monthly mean TMAX/TMIN + station latitude, then Hargreaves PET.
+## Join monthly mean TMAX/TMIN + station latitude. PET is computed further down,
+## AFTER the series is made gap-free -- hargreaves() treats its input as a monthly
+## series starting in January, so it must see each station's full, ordered,
+## contiguous 12-month cycle at once, not one month at a time. Restrict to the
+## 2000-2026 window here so every station starts cleanly at January 2000.
 pdsi_in <- totalprcp %>%
   left_join(nc.max %>% group_by(STATION, YEAR, MONTH) %>%
               summarize(TMAX = mean(TMAX, na.rm = TRUE), .groups = "drop")) %>%
   left_join(nc.min %>% group_by(STATION, YEAR, MONTH) %>%
               summarize(TMIN = mean(TMIN, na.rm = TRUE), .groups = "drop")) %>%
   left_join(nc.climate$spatial %>% rename(STATION = ID)) %>%
-  mutate(latitude = st_coordinates(geometry)[, "Y"]) %>%
-  group_by(STATION, YEAR, MONTH) %>%
-  mutate(PET = hargreaves(TMIN, TMAX, lat = latitude, na.rm = TRUE),
-         MONTH = as.numeric(MONTH),
-         YEAR = as.numeric(YEAR)) %>%
-  arrange(STATION, YEAR, MONTH)
+  mutate(latitude = st_coordinates(geometry)[, "Y"],
+         MONTH    = as.numeric(MONTH),
+         YEAR     = as.numeric(YEAR)) %>%
+  st_drop_geometry() %>%
+  filter(YEAR >= 2000, YEAR <= 2026)
 
-## pdsi() needs a gap-free monthly series per station.
+## pdsi() needs a gap-free monthly series per station. Build the full
+## Jan-2000..Dec-2026 grid, carry each station's latitude onto the filled-in
+## months, then compute Hargreaves PET ONCE over the whole ordered series per
+## station (verbose = FALSE silences the per-call message). A single scalar
+## latitude is passed because every row of a station shares one location.
 pdsi_in <- pdsi_in %>%
-  ungroup() %>%
   group_by(STATION) %>%
-  complete(YEAR = 2000:2026, MONTH = 1:12)
+  complete(YEAR = 2000:2026, MONTH = 1:12) %>%
+  arrange(STATION, YEAR, MONTH) %>%
+  mutate(latitude = latitude[!is.na(latitude)][1],
+         PET = as.numeric(hargreaves(Tmin = TMIN, Tmax = TMAX,
+                                     lat = latitude[1], na.rm = TRUE,
+                                     verbose = FALSE))) %>%
+  ungroup()
 
 run_scpdsi <- function(station_df) {
   start_year <- station_df$YEAR[1]
