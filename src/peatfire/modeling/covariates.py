@@ -233,8 +233,8 @@ COVARIATES: dict[str, CovariateSpec] = {
         # NASA HAND (Height Above Nearest Drainage), 30 m. Higher = better drained
         # / drier. Continuous -> area-weighted mean per unit
         # (modeling_notebook_explained.md, Part V).
-        root_parts=("processed", "drainage", "hand"),
-        glob="hand_*_nc.tif",
+        root_parts=("processed", "drainage"),
+        glob="hand_nc.tif",
         native_res_m=30.0,
         source="NASA HAND 30 m (drainage/wetness proxy).",
     ),
