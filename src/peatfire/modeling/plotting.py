@@ -963,7 +963,6 @@ def plot_prognostic_trajectory(
     ax.set_xticks(years)
     ax.set_xlabel("year")
     ax.set_ylabel("prognostic fire risk  E[burn | X, untreated]")
-    ax.set_title("Per-year prognostic risk over time\n(spikes = dry/El Niño years)")
     ax.legend(loc="best")
     return fig
 
