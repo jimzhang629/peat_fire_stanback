@@ -43,6 +43,14 @@ The functions, in pipeline order:
   a continuous layer, per-class for a categorical one), the "is this covariate
   interesting on its own?" picture; :func:`plot_covariates_vs_burn` lays that out
   for every covariate in the frame at once.
+* :func:`plot_burned_area_vs_covariate` / :func:`plot_burned_area_covariate_heatmap`
+  / :func:`plot_burned_area_and_covariate_by_year` -- the same covariate-vs-fire
+  question asked mask-wide and **across years**, in absolute burned hectares off
+  :func:`peatfire.modeling.build_mask_frame`: a per-year curve of area against the
+  covariate, a year x covariate heat map with burning as colour, and the annual
+  burned-area series with the covariate overlaid.
+  :func:`plot_burned_area_vs_covariates_over_years` drives all three over a set of
+  covariates and saves them.
 * :func:`plot_raw_burn_rate_by_year` -- the raw, unadjusted burn rate per calendar
   year for treated vs control: the descriptive signal every model is built to
   explain, before any matching or adjustment.
@@ -76,6 +84,7 @@ from .covariates import (
     available_temporal_covariates,
     covariate_on_grid,
     get_covariate,
+    list_covariates,
     temporal_covariate_on_grid,
 )
 from .frame import DEFAULT_RES_M
@@ -1391,6 +1400,604 @@ def plot_covariates_vs_burn(
     fig.suptitle(f"Burn rate vs each covariate  (response = {response})", y=1.0)
     fig.tight_layout()
     return fig
+
+
+# ---------------------------------------------------------------------------
+# 3e. Burned AREA vs covariate, across years (mask-wide, descriptive)
+#
+# The §3d functions above answer "does this covariate shift the burn *rate*?" on
+# the modeling frame. These answer the mask-wide, absolute question -- "how many
+# hectares of the peat AOI burned, at which covariate levels, in which years?" --
+# off `frame.build_mask_frame`. Same binning idea, three views of the same table:
+# a covariate-vs-area curve per year, a year x covariate heat map, and the plain
+# annual series with the covariate overlaid.
+# ---------------------------------------------------------------------------
+# What each metric means, for axis/colorbar labels. `area_ha` is the absolute
+# burned hectares in a cell of the table; `rate` is the burned *fraction* of that
+# cell's pixel-years (exposure-normalised, comparable across bins of unequal
+# size); `share` is the cell's percentage of that **year's** total burned area
+# (year-normalised: it shows *where* a year's fire sat in covariate space, with
+# the year's overall size divided out).
+_BURN_METRICS = {
+    "area_ha": "burned area (ha)",
+    "rate": "burn rate (fraction of pixels)",
+    "share": "share of the year's burned area (%)",
+}
+
+
+def _check_metric(metric: str) -> str:
+    if metric not in _BURN_METRICS:
+        raise ValueError(
+            f"unknown metric {metric!r}; choose one of {sorted(_BURN_METRICS)}."
+        )
+    return _BURN_METRICS[metric]
+
+
+def _covariate_bin_edges(x: np.ndarray, bins: int) -> np.ndarray:
+    """Equal-count (quantile) bin edges over the **pooled** covariate values.
+
+    Pooled, not per-year, on purpose: every year must be binned identically or the
+    per-year curves are not comparable and the heat map's rows do not line up.
+    Duplicate quantiles (a covariate with few distinct values) collapse, so the
+    returned edge count can be smaller than ``bins + 1``.
+    """
+    finite = x[np.isfinite(x)]
+    if finite.size == 0:
+        raise ValueError("covariate has no finite values to bin.")
+    edges = np.unique(np.nanquantile(finite, np.linspace(0.0, 1.0, bins + 1)))
+    if edges.size < 2:  # a constant covariate: widen so pd.cut still works
+        edges = np.array([edges[0] - 0.5, edges[0] + 0.5])
+    return edges
+
+
+def _burned_area_table(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str,
+    year_col: str,
+    area_col: str,
+    bins: int,
+    is_cat: bool,
+) -> tuple[pd.DataFrame, Optional[np.ndarray]]:
+    """Aggregate a pixel-year frame to one row per (year, covariate bin).
+
+    The shared aggregation behind all three burned-area views. Returns
+    ``(table, edges)`` where ``table`` carries, per cell: ``n_px`` pixels,
+    ``burned_px`` burned pixels, ``area_ha`` burned hectares, ``rate`` (=
+    ``burned_px / n_px``) with its binomial ``se``, ``share`` (percent of that
+    year's burned area), and ``x``, the bin's mean covariate value (the plotting
+    abscissa; absent for a categorical covariate). ``edges`` is the quantile bin
+    boundary array for a continuous covariate, ``None`` for a categorical one.
+    """
+    for col in (covariate, response, year_col):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame.")
+
+    df = frame[[year_col, covariate, response]].copy()
+    df[response] = pd.to_numeric(df[response], errors="coerce")
+    # Per-pixel area: the column build_mask_frame writes, else a caller-supplied
+    # constant, else 1 ha (so `area_ha` degrades to a burned-pixel count).
+    if area_col in frame.columns:
+        df["_area"] = pd.to_numeric(frame[area_col], errors="coerce").values
+    else:
+        df["_area"] = 1.0
+    df = df.dropna(subset=[covariate, response])
+    if df.empty:
+        raise ValueError(f"no rows with both {covariate!r} and {response!r} present.")
+
+    # A burned-area product's response is already 0/1; `> 0` also makes a severity
+    # grid ("any positive severity") behave, so the area sum is always well defined.
+    df["_burned"] = (df[response] > 0).astype("float64")
+    df["_burned_area"] = df["_burned"] * df["_area"]
+
+    if is_cat:
+        df["_bin"] = df[covariate].astype("object")
+        edges = None
+    else:
+        edges = _covariate_bin_edges(df[covariate].to_numpy(dtype="float64"), bins)
+        df["_bin"] = pd.cut(df[covariate], bins=edges, include_lowest=True)
+
+    agg = {
+        "n_px": ("_burned", "size"),
+        "burned_px": ("_burned", "sum"),
+        "rate": ("_burned", "mean"),
+        "area_ha": ("_burned_area", "sum"),
+    }
+    if not is_cat:
+        agg["x"] = (covariate, "mean")
+    out = (
+        df.groupby([year_col, "_bin"], observed=True)
+        .agg(**agg)
+        .reset_index()
+        .rename(columns={"_bin": "bin"})
+    )
+    out["se"] = _binomial_se(out["rate"].to_numpy(), out["n_px"].to_numpy())
+    year_total = out.groupby(year_col)["area_ha"].transform("sum")
+    out["share"] = np.where(year_total > 0, 100.0 * out["area_ha"] / year_total, np.nan)
+    if not is_cat:
+        out = out.sort_values([year_col, "x"])
+    return out.reset_index(drop=True), edges
+
+
+def _pool_years(table: pd.DataFrame, is_cat: bool) -> pd.DataFrame:
+    """Collapse the per-(year, bin) table over years -- the all-years curve.
+
+    Sums are summed and the rate is re-derived from the pooled counts (**not** a
+    mean of per-year rates, which would weight a sparse year like a dense one).
+    """
+    agg = {"n_px": ("n_px", "sum"), "burned_px": ("burned_px", "sum"),
+           "area_ha": ("area_ha", "sum")}
+    if not is_cat:
+        # Weight each year's bin centre by its pixel count (bins are the same edges
+        # every year, so this is essentially the pooled bin mean).
+        table = table.assign(_xw=table["x"] * table["n_px"])
+        agg["_xw"] = ("_xw", "sum")
+    out = table.groupby("bin", observed=True).agg(**agg).reset_index()
+    out["rate"] = np.where(out["n_px"] > 0, out["burned_px"] / out["n_px"], np.nan)
+    out["se"] = _binomial_se(out["rate"].to_numpy(), out["n_px"].to_numpy())
+    total = out["area_ha"].sum()
+    out["share"] = 100.0 * out["area_ha"] / total if total > 0 else np.nan
+    if not is_cat:
+        out["x"] = np.where(out["n_px"] > 0, out["_xw"] / out["n_px"], np.nan)
+        out = out.drop(columns="_xw").sort_values("x")
+    return out.reset_index(drop=True)
+
+
+def _year_colors(years: Sequence[int], cmap: str = "viridis") -> dict:
+    """One colour per year on a sequential ramp, so time reads as a gradient."""
+    cm = plt.get_cmap(cmap)
+    n = max(len(years) - 1, 1)
+    return {yr: cm(0.12 + 0.76 * i / n) for i, yr in enumerate(sorted(years))}
+
+
+def _category_order(table: pd.DataFrame, metric: str, max_categories: int) -> list:
+    """Classes ordered by their pooled value of ``metric`` (biggest first).
+
+    ``rate`` is re-derived from the pooled counts; ``area_ha`` and ``share`` order
+    identically (``share`` is just the area rescaled), so both use the area sum.
+    """
+    g = table.groupby("bin", observed=True)[["burned_px", "n_px", "area_ha"]].sum()
+    pooled = (
+        (g["burned_px"] / g["n_px"]) if metric == "rate" else g["area_ha"]
+    ).sort_values(ascending=False)
+    return list(pooled.index[:max_categories])
+
+
+def plot_burned_area_vs_covariate(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str = "burned",
+    year_col: str = "year",
+    metric: str = "area_ha",
+    bins: int = 8,
+    categorical: Optional[bool] = None,
+    area_col: str = "pixel_area_ha",
+    by_year: bool = True,
+    show_pooled: bool = True,
+    max_categories: int = 25,
+    ax: Optional[plt.Axes] = None,
+):
+    """Burned **area** against one covariate, one curve per year.
+
+    The "covariate on x, burned area on y" picture, over a whole mask rather than a
+    treated/control design: bin the covariate once over all years (equal-count
+    quantile bins, so every bin holds a comparable number of pixels), then plot the
+    burned hectares that fell in each bin. Drawn as **one line per year** on a
+    sequential colour ramp (dark = early, bright = late), with the all-years pooled
+    curve in black on top -- so a covariate that concentrates fire shows up as a
+    sloped/peaked pooled curve, and a year that burned somewhere unusual shows up as
+    a line departing from that shape.
+
+    A raw scatter of the response would be uninformative -- ``burned`` is a 0/1
+    pixel-year flag, so every point would sit on 0 or 1 -- which is why the covariate
+    is binned and the response aggregated within each bin. That is also the
+    difference from :func:`plot_covariate_vs_burn`, which asks the *rate* question on
+    the treated/control modeling frame; this one is absolute, mask-wide, and split by
+    year.
+
+    Parameters
+    ----------
+    frame : DataFrame
+        Pixel-year table with ``covariate``, ``response`` and ``year_col`` -- e.g.
+        :func:`peatfire.modeling.build_mask_frame` output (which supplies
+        ``pixel_area_ha``), or the treated/control ``panel``.
+    metric : {"area_ha", "rate", "share"}
+        ``"area_ha"`` (default) plots absolute burned hectares -- the quantity the
+        question is usually about, but note it is a *count*, so a bin holding more
+        of the landscape can top the chart just by being bigger. ``"rate"`` divides
+        that out (burned fraction of the bin's pixels) and is the fairer read of
+        "does fire prefer this covariate level". ``"share"`` normalises within each
+        year instead (percent of that year's burned area), which puts a big fire
+        year and a quiet one on the same axis.
+    bins : int
+        Number of equal-count bins for a continuous covariate.
+    categorical : bool, optional
+        Force categorical (per-class) or continuous (binned) treatment. Default
+        auto-detects from the covariate registry / dtype.
+    by_year : bool
+        ``False`` collapses to the single pooled curve.
+    show_pooled : bool
+        Draw the all-years pooled curve alongside the per-year lines. With
+        ``metric="area_ha"`` that curve is the *sum* over years, so it sits well
+        above them and compresses their vertical range -- pass ``False`` to zoom
+        into the per-year lines (or use ``"rate"`` / ``"share"``, which are on the
+        same scale as the years).
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    ylabel = _check_metric(metric)
+    is_cat = _is_categorical_covariate(frame, covariate, categorical)
+    table, _ = _burned_area_table(
+        frame, covariate, response, year_col, area_col, bins, is_cat
+    )
+    pooled = _pool_years(table, is_cat)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7.8, 5))
+    else:
+        fig = ax.figure
+
+    # Categorical: fix a class order (by pooled burned area) and plot on positions.
+    if is_cat:
+        order = _category_order(table, metric, max_categories)
+        pos = {cls: i for i, cls in enumerate(order)}
+        table = table[table["bin"].isin(order)].assign(x=lambda d: d["bin"].map(pos))
+        pooled = pooled[pooled["bin"].isin(order)].assign(x=lambda d: d["bin"].map(pos))
+
+    # Classes have no natural order, so a connecting line would invent one: draw
+    # markers only for a categorical covariate, lines for a continuous one.
+    fmt = "o" if is_cat else "-o"
+
+    if by_year:
+        years = sorted(table[year_col].unique())
+        colors = _year_colors(years)
+        for yr in years:
+            g = table[table[year_col] == yr].sort_values("x")
+            if g.empty:
+                continue
+            ax.plot(g["x"], g[metric], fmt, color=colors[yr], markersize=4,
+                    lw=1.4, alpha=0.9, label=str(int(yr)), zorder=2)
+    if show_pooled or not by_year:
+        ax.plot(pooled["x"], pooled[metric], fmt, color="black", markersize=6,
+                lw=2.0, label="all years", zorder=3)
+        if metric == "rate":
+            ax.fill_between(pooled["x"], pooled["rate"] - pooled["se"],
+                            pooled["rate"] + pooled["se"], color="0.5",
+                            alpha=0.2, zorder=1)
+
+    if is_cat:
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels([str(o) for o in order], rotation=45, ha="right")
+    ax.set_xlabel(f"{covariate}" + ("" if is_cat else "  (bin mean)"))
+    ax.set_ylabel(ylabel)
+    ax.set_ylim(bottom=0)
+    ax.set_title(f"{ylabel.capitalize()} vs {covariate}")
+    ax.legend(loc="best", ncol=2, title="year" if by_year else None)
+    return fig
+
+
+def plot_burned_area_covariate_heatmap(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str = "burned",
+    year_col: str = "year",
+    metric: str = "area_ha",
+    bins: int = 8,
+    categorical: Optional[bool] = None,
+    area_col: str = "pixel_area_ha",
+    cmap: str = "inferno",
+    annotate: bool = False,
+    max_categories: int = 25,
+    ax: Optional[plt.Axes] = None,
+):
+    """Year x covariate heat map of burned area -- hotter = more burning.
+
+    The two-dimensional version of :func:`plot_burned_area_vs_covariate`: **time on
+    x, covariate level on y, burned area as colour**. Each column is one year, each
+    row one covariate bin, and the cell colour is how much burned in that
+    (year, covariate-level) combination on a "hot" ramp (dark = little, bright =
+    much). It answers the question the per-year curves make you read off overlapping
+    lines: *did the covariate level where fire concentrates move between years?* --
+    a diagonal or drifting bright band means the covariate-fire relationship is
+    year-dependent, a stable bright row means it is not.
+
+    For a continuous covariate the y axis carries the **real covariate values**
+    (quantile bin edges), so rows have unequal heights -- that is honest: an
+    equal-count bin in a dense part of the covariate range is genuinely narrow.
+    Cells with no pixels are left blank (light grey).
+
+    ``metric`` behaves as in :func:`plot_burned_area_vs_covariate`; ``"share"`` is
+    often the most readable here, since with ``"area_ha"`` one big fire year can
+    dominate the colour scale and flatten every other column to black.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    clabel = _check_metric(metric)
+    is_cat = _is_categorical_covariate(frame, covariate, categorical)
+    table, edges = _burned_area_table(
+        frame, covariate, response, year_col, area_col, bins, is_cat
+    )
+
+    years = sorted(table[year_col].unique())
+    if is_cat:
+        # Rows are classes, ordered by pooled burned area (biggest at the top).
+        row_order = _category_order(table, metric, max_categories)[::-1]
+        y_edges = np.arange(len(row_order) + 1) - 0.5
+    else:
+        # Rows are the quantile bins, ascending; use the real edges as the y axis.
+        row_order = list(
+            table.sort_values("x").drop_duplicates("bin")["bin"]
+        )
+        y_edges = edges
+
+    grid = np.full((len(row_order), len(years)), np.nan)
+    row_ix = {b: i for i, b in enumerate(row_order)}
+    col_ix = {y: j for j, y in enumerate(years)}
+    for _, r in table.iterrows():
+        i, j = row_ix.get(r["bin"]), col_ix.get(r[year_col])
+        if i is not None and j is not None:
+            grid[i, j] = r[metric]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(1.1 * len(years) + 5.0, 5.2))
+    else:
+        fig = ax.figure
+
+    # One column per year (positions, not calendar arithmetic) so a gap year
+    # does not silently stretch a column.
+    x_edges = np.arange(len(years) + 1) - 0.5
+    this_cmap = plt.get_cmap(cmap).copy()
+    this_cmap.set_bad("0.9")
+    mesh = ax.pcolormesh(
+        x_edges, y_edges, np.ma.masked_invalid(grid),
+        cmap=this_cmap, shading="flat",
+    )
+    fig.colorbar(mesh, ax=ax, shrink=0.9, label=clabel)
+
+    if annotate:
+        num_fmt = ",.0f" if metric == "area_ha" else (".3f" if metric == "rate" else ".0f")
+        for i in range(grid.shape[0]):
+            yc = 0.5 * (y_edges[i] + y_edges[i + 1])
+            for j in range(grid.shape[1]):
+                if not np.isfinite(grid[i, j]):
+                    continue
+                # Dark text on a bright cell, light text on a dark one.
+                r, g, b, _ = this_cmap(mesh.norm(grid[i, j]))
+                lum = 0.299 * r + 0.587 * g + 0.114 * b
+                ax.text(j, yc, format(grid[i, j], num_fmt), ha="center", va="center",
+                        fontsize=8, color="0.1" if lum > 0.55 else "0.95")
+
+    ax.set_xticks(range(len(years)))
+    ax.set_xticklabels([str(int(y)) for y in years])
+    if is_cat:
+        ax.set_yticks(range(len(row_order)))
+        ax.set_yticklabels([str(b) for b in row_order])
+    ax.set_xlabel("year")
+    ax.set_ylabel(covariate)
+    ax.set_title(f"{clabel.capitalize()} by year and {covariate}\n(brighter = more burning)")
+    return fig
+
+
+def plot_burned_area_and_covariate_by_year(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str = "burned",
+    year_col: str = "year",
+    area_col: str = "pixel_area_ha",
+    agg: str = "mean",
+    ax: Optional[plt.Axes] = None,
+):
+    """Annual burned area (bars) with the mask-mean covariate overlaid (line).
+
+    The most direct reading of "burned area over time against a covariate": total
+    hectares burned in the mask each year as bars, and that year's **mask-average
+    covariate** as a line on a twin axis. For a *temporal* covariate (``pdsi``,
+    ``precip``, ``tmax``) this is the picture that actually answers "do the big fire
+    years line up with the dry years?", which neither of the binned views shows --
+    they bin *within* years, so a year-to-year driver is invisible to them.
+
+    The Pearson and Spearman correlations across years are annotated. Read them as
+    description, not inference: with a handful of panel years the estimate is very
+    noisy, and it is the DiD's ``treated:pdsi`` interaction that does the real work.
+
+    A **static** covariate is constant across years, so the overlaid line is flat by
+    construction and the panel is labelled as such -- for static layers the binned
+    views (:func:`plot_burned_area_vs_covariate`,
+    :func:`plot_burned_area_covariate_heatmap`) are the informative ones.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    for col in (covariate, response, year_col):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame.")
+    if not pd.api.types.is_numeric_dtype(frame[covariate]):
+        raise ValueError(
+            f"{covariate!r} is not numeric; this view averages the covariate per "
+            "year. Use plot_burned_area_covariate_heatmap for a categorical layer."
+        )
+
+    df = frame[[year_col, covariate, response]].copy()
+    df[response] = pd.to_numeric(df[response], errors="coerce")
+    df["_area"] = (
+        pd.to_numeric(frame[area_col], errors="coerce").values
+        if area_col in frame.columns else 1.0
+    )
+    df = df.dropna(subset=[response])
+    df["_burned_area"] = (df[response] > 0).astype("float64") * df["_area"]
+
+    per_year = df.groupby(year_col).agg(
+        area_ha=("_burned_area", "sum"),
+        cov=(covariate, agg),
+        n_px=(response, "size"),
+    ).reset_index()
+    years = per_year[year_col].to_numpy()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    ax.bar(years, per_year["area_ha"], width=0.65, color=TREATED_COLOR, alpha=0.75,
+           label="burned area", zorder=2)
+    ax.set_xlabel("calendar year")
+    ax.set_ylabel("burned area (ha)")
+    ax.set_xticks(years)
+    ax.set_ylim(bottom=0)
+
+    ax2 = ax.twinx()
+    ax2.spines["right"].set_visible(True)
+    ax2.plot(years, per_year["cov"], "-o", color=CONTROL_COLOR, lw=1.8,
+             label=f"{covariate} ({agg})", zorder=3)
+    ax2.set_ylabel(f"{covariate}  (mask {agg})")
+
+    # Correlations across years -- descriptive only (n = number of panel years).
+    a = per_year["area_ha"].to_numpy(dtype="float64")
+    c = per_year["cov"].to_numpy(dtype="float64")
+    ok = np.isfinite(a) & np.isfinite(c)
+    static = ok.sum() > 1 and float(np.nanstd(c[ok])) < 1e-9
+    if static:
+        note = f"{covariate} is constant across years (a static covariate)"
+    elif ok.sum() >= 3:
+        pearson = float(np.corrcoef(a[ok], c[ok])[0, 1])
+        ranks = lambda v: pd.Series(v).rank().to_numpy()  # noqa: E731
+        spearman = float(np.corrcoef(ranks(a[ok]), ranks(c[ok]))[0, 1])
+        note = f"r = {pearson:+.2f},  rho = {spearman:+.2f}  (n = {int(ok.sum())} years)"
+    else:
+        note = "too few years for a correlation"
+
+    handles = ax.get_legend_handles_labels()[0] + ax2.get_legend_handles_labels()[0]
+    labels = ax.get_legend_handles_labels()[1] + ax2.get_legend_handles_labels()[1]
+    ax.legend(handles, labels, loc="upper left")
+    ax.set_title(f"Burned area per year vs {covariate}\n{note}")
+    return fig
+
+
+# The views the driver below can produce, mapped to the function that draws each.
+BURNED_AREA_PLOT_KINDS = ("vs_covariate", "heatmap", "by_year")
+
+
+def plot_burned_area_vs_covariates_over_years(
+    fire_product: str = "FireCCIS311",
+    mask: Optional[gpd.GeoDataFrame] = None,
+    covariates: Optional[Sequence[str]] = None,
+    years: Sequence[int] = range(2019, 2025),
+    frame: Optional[pd.DataFrame] = None,
+    kinds: Sequence[str] = ("vs_covariate", "heatmap"),
+    metric: str = "area_ha",
+    bins: int = 8,
+    response: str = "burned",
+    year_col: str = "year",
+    res_m: float = DEFAULT_RES_M,
+    out_dir=None,
+    dpi: Optional[int] = None,
+    close: bool = False,
+) -> dict:
+    """Draw (and optionally save) the burned-area views for a set of covariates.
+
+    The one-call driver: build the mask's pixel-year table **once** with
+    :func:`peatfire.modeling.build_mask_frame`, then lay out the requested views for
+    every covariate. Note that year is a *dimension inside* each figure (a colour per
+    year, or the heat map's x axis) rather than an outer loop producing one figure
+    per year -- comparing years is the whole point, and it only works if they share
+    an axis.
+
+    Parameters
+    ----------
+    fire_product : str
+        Registered burned-area product supplying the response (e.g.
+        ``"FireCCI51"``, ``"FireCCIS311"``). Also prefixes the saved filenames.
+    mask : GeoDataFrame, optional
+        Area to tabulate (e.g. the NC 80% histosol peat AOI). Required unless a
+        prebuilt ``frame`` is passed.
+    covariates : sequence of str, optional
+        Covariates to draw. Defaults to every **continuous** registered covariate
+        (static + per-year) present in the frame with more than one distinct value.
+    years : sequence of int
+        Panel years, forwarded to ``build_mask_frame``.
+    frame : DataFrame, optional
+        A prebuilt pixel-year table to plot instead of reading the rasters again --
+        pass the return of a previous call's ``build_mask_frame`` (or the modeling
+        panel) when iterating on the figures.
+    kinds : sequence of str
+        Which views to draw, any of :data:`BURNED_AREA_PLOT_KINDS`:
+        ``"vs_covariate"`` (covariate on x, burned area on y, one line per year),
+        ``"heatmap"`` (year on x, covariate on y, burned area as colour),
+        ``"by_year"`` (annual burned-area bars with the covariate overlaid; skipped
+        for categorical covariates, which it cannot average).
+    out_dir : path-like, optional
+        Directory to save into as ``<fire_product>_<covariate>_<kind>.png``. Not
+        saved when omitted.
+    close : bool
+        Close each figure after saving. Set it when sweeping many covariates, so
+        matplotlib does not hold dozens of open figures.
+
+    Returns
+    -------
+    dict
+        ``{(covariate, kind): Figure}`` for every panel drawn (figures are still
+        returned when ``close=True``, but they are no longer displayable).
+    """
+    from pathlib import Path
+
+    from .frame import build_mask_frame
+
+    bad = [k for k in kinds if k not in BURNED_AREA_PLOT_KINDS]
+    if bad:
+        raise ValueError(f"unknown kind(s) {bad}; choose from {list(BURNED_AREA_PLOT_KINDS)}.")
+
+    if frame is None:
+        if mask is None:
+            raise ValueError("pass either `mask` (to build the table) or a prebuilt `frame`.")
+        frame = build_mask_frame(mask, product=fire_product, years=years, res_m=res_m)
+
+    if covariates is None:
+        continuous = set(list_covariates("continuous")) | {
+            n for n, spec in TEMPORAL_COVARIATES.items() if spec.role == "continuous"
+        }
+        covariates = [
+            c for c in frame.columns
+            if c in continuous and frame[c].nunique(dropna=True) > 1
+        ]
+    covariates = [c for c in covariates if c in frame.columns]
+    if not covariates:
+        raise ValueError("no covariates to plot (none of the requested names are frame columns).")
+
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    figs: dict = {}
+    for cov in covariates:
+        for kind in kinds:
+            if kind == "vs_covariate":
+                fig = plot_burned_area_vs_covariate(
+                    frame, cov, response=response, year_col=year_col,
+                    metric=metric, bins=bins,
+                )
+            elif kind == "heatmap":
+                fig = plot_burned_area_covariate_heatmap(
+                    frame, cov, response=response, year_col=year_col,
+                    metric=metric, bins=bins,
+                )
+            else:  # "by_year" -- needs a numeric covariate to average per year
+                if not pd.api.types.is_numeric_dtype(frame[cov]):
+                    continue
+                fig = plot_burned_area_and_covariate_by_year(
+                    frame, cov, response=response, year_col=year_col,
+                )
+            fig.suptitle(fire_product, fontsize=10, color="0.4", x=0.01, ha="left")
+            if out_dir is not None:
+                fig.savefig(
+                    out_dir / f"{fire_product}_{cov}_{kind}.png",
+                    bbox_inches="tight", dpi=dpi,
+                )
+            if close:
+                plt.close(fig)
+            figs[(cov, kind)] = fig
+    return figs
 
 
 # ---------------------------------------------------------------------------

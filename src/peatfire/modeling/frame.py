@@ -22,6 +22,11 @@ Design choices (see ``modeling_notebook_explained.md``, Part V):
   ``units`` GeoDataFrame (with ``treated`` and ``site_id`` columns); it does not
   decide which pixels are controls. That keeps the causal design (who is a
   control, matched on what) separate and explicit.
+
+:func:`build_mask_frame` is the same assembly with the causal design taken out: it
+tabulates every cell in a plain **area mask** (the NC peat AOI, a county) rather
+than in matched units, for the purely descriptive burned-area-vs-covariate
+pictures in :mod:`peatfire.modeling.plotting`.
 """
 
 from __future__ import annotations
@@ -40,9 +45,10 @@ from ..preproc.data_loading import data_path
 from ..fire_products_comparison.fire_comparison import (
     ANALYSIS_CRS,
     build_common_grid,
+    rasterize_polygons_to_grid,
     to_common_grid,
 )
-from ..fire_products_comparison.fire_products import load_standardized
+from ..fire_products_comparison.fire_products import get_spec, load_standardized
 from .covariates import (
     available_covariates,
     available_temporal_covariates,
@@ -279,6 +285,114 @@ def build_frame(
     frame = pd.concat(rows, ignore_index=True)
     # burned is NaN where the product had no coverage; drop those cell-years.
     return frame.dropna(subset=["burned"]).reset_index(drop=True)
+
+
+def build_mask_frame(
+    mask: gpd.GeoDataFrame,
+    product: str = "FireCCIS311",
+    years: Iterable[int] = range(2019, 2025),
+    covariate_names: Optional[Sequence[str]] = None,
+    temporal_covariate_names: Optional[Sequence[str]] = None,
+    res_m: float = DEFAULT_RES_M,
+    all_touched: bool = True,
+    response_col: str = "burned",
+) -> pd.DataFrame:
+    """Tidy pixel-year table for **every cell in a mask** (no treated/control design).
+
+    The descriptive sibling of :func:`build_frame`. ``build_frame`` needs analysis
+    ``units`` (treated restoration polygons + matched controls) because it serves the
+    causal design; this one takes a plain **area mask** -- the NC peat AOI, a county,
+    a single site -- and returns the same shape of table for every grid cell inside
+    it. That is what the burned-area-vs-covariate pictures in
+    :mod:`peatfire.modeling.plotting` consume: they describe how fire is distributed
+    over the landscape and over the years, with no treatment contrast involved.
+
+    Everything else matches ``build_frame``: the same EPSG:5070 common grid, the same
+    swappable ``load_standardized(product, year, mask)`` response, static covariates
+    repeated across years and per-year (temporal) covariates varying by year.
+
+    Parameters
+    ----------
+    mask : GeoDataFrame
+        The area to tabulate (e.g. ``nc_peatlands_80_histosol_aoi.gpkg``). Cells are
+        kept where a mask polygon covers them; with ``all_touched`` (default) a cell
+        touched by any part of a polygon is kept, the toolkit's usual convention.
+    product : str
+        Registered **burned-area** fire product supplying the response. Point
+        (``"occurrence"``) products are rejected -- they have no per-cell burned
+        mask to aggregate.
+    years : iterable of int
+        Years to stack; a year the product does not cover is skipped.
+    covariate_names, temporal_covariate_names : sequence of str, optional
+        Static / per-year covariates to attach. Default to everything on disk
+        (:func:`available_covariates`, :func:`available_temporal_covariates`).
+    res_m : float
+        Grid resolution in metres (default = FireCCIS311 native ~300 m). Sets the
+        per-cell area, so it sets what one burned cell contributes in hectares.
+
+    Returns
+    -------
+    DataFrame
+        One row per (cell, year): ``x``, ``y``, ``year``, the covariate columns,
+        ``burned`` (the response; 1/0 for a burned-area product), and a constant
+        ``pixel_area_ha`` so a burned-area total is ``sum(burned * pixel_area_ha)``.
+        Cell-years the product does not cover are dropped.
+    """
+    if get_spec(product).family == "occurrence":
+        raise ValueError(
+            f"{product!r} is a point (occurrence) product with no per-cell burned "
+            "mask; pass a burned_area (or severity) product."
+        )
+    mask = mask.to_crs(ANALYSIS_CRS)
+    grid = build_common_grid(mask, res_m=res_m)
+
+    # Which grid cells fall inside the mask (the analogue of build_frame's in_unit).
+    inside = rasterize_polygons_to_grid(mask, grid, all_touched=all_touched).values > 0
+    if not inside.any():
+        raise ValueError(
+            f"mask covers no cells at res_m={res_m}; check the mask geometry/CRS."
+        )
+
+    ys, xs = xr.broadcast(grid["y"], grid["x"])
+    base = {"y": ys.values[inside], "x": xs.values[inside]}
+
+    # --- static covariates (repeated across years) ---
+    if covariate_names is None:
+        covariate_names = available_covariates()
+    for name in covariate_names:
+        cov = covariate_on_grid(name, grid, mask)
+        if cov is None:
+            continue  # not downloaded yet -> covariates.py already warned
+        base[name] = cov.values[inside]
+    static = pd.DataFrame(base)
+
+    years = list(years)
+    if temporal_covariate_names is None:
+        temporal_covariate_names = available_temporal_covariates(years)
+
+    # --- response + per-year covariates, one block per year ---
+    rows = []
+    for year in years:
+        resp = load_standardized(product, year, mask)
+        if resp is None:
+            continue  # product absent for this year -> skip
+        burned = to_common_grid(resp.astype("float32"), grid, how="max")
+        year_df = static.copy()
+        year_df["year"] = year
+        year_df[response_col] = burned.values[inside]
+        for name in temporal_covariate_names:
+            cov = temporal_covariate_on_grid(name, grid, mask, year)
+            if cov is None:
+                continue  # that year not built yet -> covariates.py already warned
+            year_df[name] = cov.values[inside]
+        rows.append(year_df)
+
+    if not rows:
+        raise ValueError(f"No {product} data found for years {years}.")
+    frame = pd.concat(rows, ignore_index=True)
+    # Constant cell area, so burned *area* is a plain weighted sum downstream.
+    frame["pixel_area_ha"] = float(res_m) ** 2 / 1e4
+    return frame.dropna(subset=[response_col]).reset_index(drop=True)
 
 
 def attach_fire_response(
