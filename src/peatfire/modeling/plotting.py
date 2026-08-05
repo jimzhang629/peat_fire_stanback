@@ -44,12 +44,17 @@ The functions, in pipeline order:
   interesting on its own?" picture; :func:`plot_covariates_vs_burn` lays that out
   for every covariate in the frame at once.
 * :func:`plot_burned_area_vs_covariate` / :func:`plot_burned_area_covariate_heatmap`
-  / :func:`plot_burned_area_and_covariate_by_year` -- the same covariate-vs-fire
+  / :func:`plot_burned_area_and_covariate_by_year` /
+  :func:`plot_annual_burned_area_vs_covariate` -- the same covariate-vs-fire
   question asked mask-wide and **across years**, in absolute burned hectares off
-  :func:`peatfire.modeling.build_mask_frame`: a per-year curve of area against the
-  covariate, a year x covariate heat map with burning as colour, and the annual
-  burned-area series with the covariate overlaid.
-  :func:`plot_burned_area_vs_covariates_over_years` drives all three over a set of
+  :func:`peatfire.modeling.build_mask_frame`. The first two **bin within each
+  year**, so they keep the spatial variation and work for static layers: a per-year
+  curve of burned area against the covariate, and a year x covariate heat map with
+  burning as colour. The last two **collapse the mask to one number per year**, so
+  they show the year-to-year driver instead and go degenerate on a static layer:
+  the annual burned-area series with the covariate overlaid, and the one-point-per-
+  year scatter of the two totals against each other.
+  :func:`plot_burned_area_vs_covariates_over_years` drives all four over a set of
   covariates and saves them.
 * :func:`plot_raw_burn_rate_by_year` -- the raw, unadjusted burn rate per calendar
   year for treated vs control: the descriptive signal every model is built to
@@ -1780,6 +1785,166 @@ def plot_burned_area_covariate_heatmap(
     return fig
 
 
+def _annual_totals(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str,
+    year_col: str,
+    area_col: str,
+    agg: str,
+) -> pd.DataFrame:
+    """Collapse the mask to **one row per year**: burned total + aggregate covariate.
+
+    The whole-mask reduction behind the two annual views: no binning at all, just
+    "how much of the mask burned this year" and "what was the mask's covariate level
+    this year". Returns ``year``, ``area_ha`` (burned hectares), ``rate`` (burned
+    fraction of the mask's pixels), ``cov`` (the covariate aggregated by ``agg``)
+    and ``n_px``.
+
+    Note what this throws away: every pixel in the mask collapses into one number,
+    so all *spatial* variation -- which places are dry, which burned -- is gone. That
+    is the trade the binned views exist to avoid; see
+    :func:`plot_annual_burned_area_vs_covariate` for when it is the right trade.
+    """
+    for col in (covariate, response, year_col):
+        if col not in frame.columns:
+            raise ValueError(f"{col!r} not in frame.")
+    if not pd.api.types.is_numeric_dtype(frame[covariate]):
+        raise ValueError(
+            f"{covariate!r} is not numeric; the annual views aggregate the covariate "
+            "over the mask. Use plot_burned_area_covariate_heatmap for a categorical "
+            "layer."
+        )
+
+    df = frame[[year_col, covariate, response]].copy()
+    df[response] = pd.to_numeric(df[response], errors="coerce")
+    df["_area"] = (
+        pd.to_numeric(frame[area_col], errors="coerce").values
+        if area_col in frame.columns else 1.0
+    )
+    df = df.dropna(subset=[response])
+    df["_burned"] = (df[response] > 0).astype("float64")
+    df["_burned_area"] = df["_burned"] * df["_area"]
+
+    return df.groupby(year_col).agg(
+        area_ha=("_burned_area", "sum"),
+        rate=("_burned", "mean"),
+        cov=(covariate, agg),
+        n_px=("_burned", "size"),
+    ).reset_index()
+
+
+def _annual_corr_note(area: np.ndarray, cov: np.ndarray, covariate: str) -> str:
+    """Pearson + Spearman across years, or a note saying why they are not reportable.
+
+    Deliberately terse and always caveated by ``n``: these are correlations over a
+    handful of *years*, not over pixels, so they are descriptive garnish on the
+    annual views -- never the evidence.
+    """
+    ok = np.isfinite(area) & np.isfinite(cov)
+    if ok.sum() > 1 and float(np.nanstd(cov[ok])) < 1e-9:
+        return f"{covariate} is constant across years (a static covariate)"
+    if ok.sum() < 3:
+        return "too few years for a correlation"
+    pearson = float(np.corrcoef(area[ok], cov[ok])[0, 1])
+    rank = lambda v: pd.Series(v).rank().to_numpy()  # noqa: E731
+    spearman = float(np.corrcoef(rank(area[ok]), rank(cov[ok]))[0, 1])
+    return f"r = {pearson:+.2f},  rho = {spearman:+.2f}  (n = {int(ok.sum())} years)"
+
+
+def plot_annual_burned_area_vs_covariate(
+    frame: pd.DataFrame,
+    covariate: str,
+    response: str = "burned",
+    year_col: str = "year",
+    area_col: str = "pixel_area_ha",
+    agg: str = "mean",
+    metric: str = "area_ha",
+    connect: bool = True,
+    ax: Optional[plt.Axes] = None,
+):
+    """One point per year: mask-aggregate covariate on x, mask burned total on y.
+
+    The un-binned, literal "covariate on x, burned area on y" plot. Each year
+    contributes a **single labelled point**: the whole mask's covariate level that
+    year against the whole mask's burned area that year. No spatial detail survives
+    -- that is the point of this view. It is the ten-second glance that asks whether
+    the dry years are the big fire years, with nothing else in the way.
+
+    Its limits are structural, not fixable, so read them off the plot:
+
+    * **One point per panel year.** Six years of FireCCI coverage means six points.
+      Fit nothing to it; the annotated correlations are description, not inference.
+    * **Static covariates collapse.** A layer that does not change over time
+      (elevation, the climate normals, the SSURGO soil layers) has the same
+      mask-aggregate every year, so every point lands on one vertical line. The
+      panel says so when it detects this. For those layers the binned views
+      (:func:`plot_burned_area_vs_covariate`,
+      :func:`plot_burned_area_covariate_heatmap`) are the only informative ones,
+      because a static covariate varies across *space* even though it does not vary
+      across *time*.
+    * **Spatial variation is averaged away.** "The peatland averaged -3 scPDSI and
+      burned 24,000 ha" is one observation; the same data binned is "within that
+      year, the driest fifth of the peatland burned at 15% and the wettest at 2.7%",
+      which is thousands of observations and the variation the matching / DiD
+      actually identify off.
+
+    :func:`plot_burned_area_and_covariate_by_year` shows the identical two numbers
+    against *time* instead of against each other -- often easier to read, since the
+    year labels are on the axis rather than beside the markers.
+
+    Parameters
+    ----------
+    agg : str
+        How to reduce the covariate over the mask each year (``"mean"``,
+        ``"median"``, ...).
+    metric : {"area_ha", "rate"}
+        y axis: absolute burned hectares, or the burned fraction of the mask's
+        pixels. (``"share"`` is meaningless here -- each year is 100% of itself.)
+    connect : bool
+        Join the points in chronological order with a faint line, so the path over
+        time is visible.
+
+    Returns the matplotlib Figure.
+    """
+    set_fire_style()
+    if metric not in ("area_ha", "rate"):
+        raise ValueError(
+            f"metric {metric!r} does not apply to the annual view; use 'area_ha' or "
+            "'rate' ('share' is 100% for every year by construction)."
+        )
+    ylabel = _BURN_METRICS[metric] if metric == "area_ha" else "burned fraction of the mask"
+    per_year = _annual_totals(frame, covariate, response, year_col, area_col, agg)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 5.2))
+    else:
+        fig = ax.figure
+
+    x = per_year["cov"].to_numpy(dtype="float64")
+    y = per_year[metric].to_numpy(dtype="float64")
+    years = per_year[year_col].to_numpy()
+    colors = _year_colors(list(years))
+
+    if connect and len(years) > 1:
+        order = np.argsort(years)
+        ax.plot(x[order], y[order], "-", color="0.75", lw=1.0, zorder=1)
+    for xi, yi, yr in zip(x, y, years):
+        ax.scatter(xi, yi, s=70, color=colors[yr], edgecolor="0.3", linewidths=0.6,
+                   zorder=3)
+        ax.annotate(str(int(yr)), (xi, yi), textcoords="offset points",
+                    xytext=(7, 5), fontsize=9, color="0.25")
+
+    note = _annual_corr_note(y, x, covariate)
+    ax.set_xlabel(f"{covariate}  (mask {agg})")
+    ax.set_ylabel(ylabel)
+    ax.set_ylim(bottom=0)
+    ax.set_title(
+        f"{ylabel.capitalize()} vs {covariate}, one point per year\n{note}"
+    )
+    return fig
+
+
 def plot_burned_area_and_covariate_by_year(
     frame: pd.DataFrame,
     covariate: str,
@@ -1810,29 +1975,7 @@ def plot_burned_area_and_covariate_by_year(
     Returns the matplotlib Figure.
     """
     set_fire_style()
-    for col in (covariate, response, year_col):
-        if col not in frame.columns:
-            raise ValueError(f"{col!r} not in frame.")
-    if not pd.api.types.is_numeric_dtype(frame[covariate]):
-        raise ValueError(
-            f"{covariate!r} is not numeric; this view averages the covariate per "
-            "year. Use plot_burned_area_covariate_heatmap for a categorical layer."
-        )
-
-    df = frame[[year_col, covariate, response]].copy()
-    df[response] = pd.to_numeric(df[response], errors="coerce")
-    df["_area"] = (
-        pd.to_numeric(frame[area_col], errors="coerce").values
-        if area_col in frame.columns else 1.0
-    )
-    df = df.dropna(subset=[response])
-    df["_burned_area"] = (df[response] > 0).astype("float64") * df["_area"]
-
-    per_year = df.groupby(year_col).agg(
-        area_ha=("_burned_area", "sum"),
-        cov=(covariate, agg),
-        n_px=(response, "size"),
-    ).reset_index()
+    per_year = _annual_totals(frame, covariate, response, year_col, area_col, agg)
     years = per_year[year_col].to_numpy()
 
     if ax is None:
@@ -1854,19 +1997,11 @@ def plot_burned_area_and_covariate_by_year(
     ax2.set_ylabel(f"{covariate}  (mask {agg})")
 
     # Correlations across years -- descriptive only (n = number of panel years).
-    a = per_year["area_ha"].to_numpy(dtype="float64")
-    c = per_year["cov"].to_numpy(dtype="float64")
-    ok = np.isfinite(a) & np.isfinite(c)
-    static = ok.sum() > 1 and float(np.nanstd(c[ok])) < 1e-9
-    if static:
-        note = f"{covariate} is constant across years (a static covariate)"
-    elif ok.sum() >= 3:
-        pearson = float(np.corrcoef(a[ok], c[ok])[0, 1])
-        ranks = lambda v: pd.Series(v).rank().to_numpy()  # noqa: E731
-        spearman = float(np.corrcoef(ranks(a[ok]), ranks(c[ok]))[0, 1])
-        note = f"r = {pearson:+.2f},  rho = {spearman:+.2f}  (n = {int(ok.sum())} years)"
-    else:
-        note = "too few years for a correlation"
+    note = _annual_corr_note(
+        per_year["area_ha"].to_numpy(dtype="float64"),
+        per_year["cov"].to_numpy(dtype="float64"),
+        covariate,
+    )
 
     handles = ax.get_legend_handles_labels()[0] + ax2.get_legend_handles_labels()[0]
     labels = ax.get_legend_handles_labels()[1] + ax2.get_legend_handles_labels()[1]
@@ -1875,8 +2010,10 @@ def plot_burned_area_and_covariate_by_year(
     return fig
 
 
-# The views the driver below can produce, mapped to the function that draws each.
-BURNED_AREA_PLOT_KINDS = ("vs_covariate", "heatmap", "by_year")
+# The views the driver below can produce. The first two bin *within* years (they
+# keep the spatial variation); the last two collapse the mask to one number per
+# year (they keep only the year-to-year signal, and go blank on static layers).
+BURNED_AREA_PLOT_KINDS = ("vs_covariate", "heatmap", "by_year", "annual")
 
 
 def plot_burned_area_vs_covariates_over_years(
@@ -1925,8 +2062,12 @@ def plot_burned_area_vs_covariates_over_years(
         Which views to draw, any of :data:`BURNED_AREA_PLOT_KINDS`:
         ``"vs_covariate"`` (covariate on x, burned area on y, one line per year),
         ``"heatmap"`` (year on x, covariate on y, burned area as colour),
-        ``"by_year"`` (annual burned-area bars with the covariate overlaid; skipped
-        for categorical covariates, which it cannot average).
+        ``"by_year"`` (annual burned-area bars with the covariate overlaid),
+        ``"annual"`` (one point per year: mask-aggregate covariate on x, mask
+        burned area on y). The last two aggregate the covariate over the mask, so
+        they are skipped for categorical covariates and are flat/degenerate for
+        static ones; ``metric="share"`` falls back to ``"area_ha"`` for
+        ``"annual"``, where a share of the year's own total is always 100%.
     out_dir : path-like, optional
         Directory to save into as ``<fire_product>_<covariate>_<kind>.png``. Not
         saved when omitted.
@@ -1982,11 +2123,16 @@ def plot_burned_area_vs_covariates_over_years(
                     frame, cov, response=response, year_col=year_col,
                     metric=metric, bins=bins,
                 )
-            else:  # "by_year" -- needs a numeric covariate to average per year
-                if not pd.api.types.is_numeric_dtype(frame[cov]):
-                    continue
+            elif not pd.api.types.is_numeric_dtype(frame[cov]):
+                continue  # "by_year"/"annual" aggregate the covariate: numeric only
+            elif kind == "by_year":
                 fig = plot_burned_area_and_covariate_by_year(
                     frame, cov, response=response, year_col=year_col,
+                )
+            else:  # "annual" -- one point per year; "share" has no meaning there
+                fig = plot_annual_burned_area_vs_covariate(
+                    frame, cov, response=response, year_col=year_col,
+                    metric="area_ha" if metric == "share" else metric,
                 )
             fig.suptitle(fire_product, fontsize=10, color="0.4", x=0.01, ha="left")
             if out_dir is not None:

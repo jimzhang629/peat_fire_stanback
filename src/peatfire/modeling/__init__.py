@@ -82,6 +82,7 @@ from .soil import (  # SSURGO soil polygons -> gridded soil covariates
 )
 from .plotting import (  # step-by-step data-inspection diagnostics
     BURNED_AREA_PLOT_KINDS,
+    plot_annual_burned_area_vs_covariate,
     plot_burned_area_and_covariate_by_year,
     plot_burned_area_covariate_heatmap,
     plot_burned_area_vs_covariate,
@@ -155,6 +156,7 @@ __all__ = [
     "inspect_soil_columns",
     "mukey_attribute",
     "BURNED_AREA_PLOT_KINDS",
+    "plot_annual_burned_area_vs_covariate",
     "plot_burned_area_and_covariate_by_year",
     "plot_burned_area_covariate_heatmap",
     "plot_burned_area_vs_covariate",
