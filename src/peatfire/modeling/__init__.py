@@ -39,6 +39,7 @@ from .covariates import (
 from .frame import (
     attach_fire_response,
     build_frame,
+    build_mask_frame,
     load_completed_restoration_sites_in_analysis_crs,
     load_restoration_sites,
 )
@@ -80,6 +81,11 @@ from .soil import (  # SSURGO soil polygons -> gridded soil covariates
     mukey_attribute,
 )
 from .plotting import (  # step-by-step data-inspection diagnostics
+    BURNED_AREA_PLOT_KINDS,
+    plot_burned_area_and_covariate_by_year,
+    plot_burned_area_covariate_heatmap,
+    plot_burned_area_vs_covariate,
+    plot_burned_area_vs_covariates_over_years,
     plot_candidate_control_pixels,
     plot_covariate_maps,
     plot_covariate_pairs,
@@ -134,6 +140,7 @@ __all__ = [
     "temporal_covariate_on_grid",
     "attach_fire_response",
     "build_frame",
+    "build_mask_frame",
     "load_completed_restoration_sites_in_analysis_crs",
     "load_restoration_sites",
     "build_annual_climate",
@@ -147,6 +154,11 @@ __all__ = [
     "build_soil_database_rasters",
     "inspect_soil_columns",
     "mukey_attribute",
+    "BURNED_AREA_PLOT_KINDS",
+    "plot_burned_area_and_covariate_by_year",
+    "plot_burned_area_covariate_heatmap",
+    "plot_burned_area_vs_covariate",
+    "plot_burned_area_vs_covariates_over_years",
     "plot_candidate_control_pixels",
     "plot_covariate_maps",
     "plot_covariate_pairs",
