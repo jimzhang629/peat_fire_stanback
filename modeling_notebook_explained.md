@@ -292,6 +292,33 @@ Contents:
   dry-year swings appear in both groups) and re-aligned to event time. This is
   the model-free signal the DiD and logit are built to explain.
 
+### Burned area vs the covariates, across years (descriptive, mask-wide)
+
+- No treatment contrast here at all: the question is how the fire product's
+  **burned hectares** distribute over the peat AOI's covariates and years.
+- `build_mask_frame(aoi, product=..., years=..., res_m=...)` — the same tidy
+  pixel-year table as `build_frame`, but over every cell in a plain area **mask**
+  instead of matched units, plus a constant `pixel_area_ha` so burned area is a
+  weighted sum.
+- `plot_burned_area_vs_covariate` — covariate on x, burned area on y, one line
+  per year (the covariate is binned into equal-count bins first, because a 0/1
+  `burned` flag has no useful raw scatter).
+- `plot_burned_area_covariate_heatmap` — year on x, covariate on y, burned area
+  as a hot colour scale. **Reading it:** a bright band that *drifts* across
+  columns means the covariate level where fire concentrates moves year to year;
+  a stable bright row means the covariate–fire relation holds across years.
+- `plot_burned_area_and_covariate_by_year` — annual burned-area bars with the
+  mask-mean covariate overlaid, the "do the big fire years line up with the dry
+  years?" picture (per-year covariates only; a static layer is flat by
+  construction). Its annotated correlation is descriptive — with a handful of
+  panel years it is far too noisy to be inference.
+- All three take `metric`: `"area_ha"` (absolute hectares — a count, so a bin
+  covering more of the landscape can lead just by being bigger), `"rate"` (burned
+  fraction of the bin's pixels, exposure-free), `"share"` (percent of *that
+  year's* burned area, which stops one big fire year from dominating a colour
+  scale). `plot_burned_area_vs_covariates_over_years` drives the lot over every
+  continuous covariate and saves them per covariate.
+
 ### Match controls + balance (Stage 5–7) → `units`
 
 - The causal-design heart of the *levels* route: pair every treated pixel with a
