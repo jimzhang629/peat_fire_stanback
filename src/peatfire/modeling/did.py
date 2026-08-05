@@ -738,8 +738,9 @@ def estimate_att(
         pandas2ri.activate()
         flat = panel.reset_index()
         entity, time = panel.index.names
-        # R `did` ties clustervars to the multiplier bootstrap too (bstrap=FALSE
-        # with a non-entity clustervar is refused), so mirror the same rule.
+        # R `did` documents clustervars as requiring the multiplier bootstrap for
+        # the same reason `differences` does, so mirror the rule and set bstrap
+        # explicitly rather than relying on att_gt's default.
         return did.att_gt(
             yname=response,
             tname=time,
