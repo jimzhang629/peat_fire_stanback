@@ -463,12 +463,21 @@ Usage:
 
 ```python
 att, overall, es = did.fit_att(panel, covariates=covs)                     # site (default)
-att, overall, es = did.fit_att(panel, covariates=covs, cluster_by="pixel") # the deflated one
+att_p, overall_p, es_p = did.fit_att(panel, covariates=covs, cluster_by="pixel")  # the deflated one
+
+# Both runs in one table: same att, two std_errors, design_effect = se_site/se_pixel.
+did.compare_cluster_levels({"site": overall, "pixel": overall_p})
+did.compare_cluster_levels({"site": es, "pixel": es_p})   # per event time, too
 
 r = did.att_collapsed(panel)          # transparent cross-check
 r["by_site"]                          # the per-site theta_s table
 r["design_effect"]                    # se_site / se_pixel, the number from Part 7
 ```
+
+This is what `notebooks/modeling.ipynb` now does at both DiD stages (§2b on the
+unmatched panel, §2c on the matched one), plus the `att_collapsed` cross-check on
+the matched panel — the one site-clustered ATT in the notebook that needs no
+optional backend.
 
 **Quick check on which SEs you're looking at:** the `std_error` column header reads
 `bootstrap` when clustered and `analytic` when not.

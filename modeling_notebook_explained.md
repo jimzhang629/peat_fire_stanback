@@ -283,10 +283,27 @@ Contents:
     `aggregate_att(kind="event")` — ATT by time-since-restoration.
   - Wrapped in `try/except` because `differences` is an optional dependency —
     the levels route (§3–4) still runs without it.
-- `plot_event_study(event_study)` — ATT vs event time. **Reading it:** the
-  pre-treatment points (left of the onset line) are the parallel-trends check
-  and should straddle zero; the post-treatment points trace how the effect
-  evolves after restoration.
+- **The notebook fits it twice**, `cluster_by="site"` and `cluster_by="pixel"`,
+  and stacks the two overall ATTs with
+  `did.compare_cluster_levels({"site": overall, "pixel": overall_pixel})`. The
+  point estimate is identical by construction — only the variance moves — so the
+  table isolates the clustering choice: `se_kind` reads `bootstrap` (clustered)
+  vs `analytic` (pixel-level) straight off the backend, and `design_effect` is
+  `se_site / se_pixel`. Report the **site** row; the pixel row is there to
+  quantify how deflated the analytic SE is. Full derivation in
+  `clustered_standard_errors_explained.md`; the inference argument is
+  [M7](#m7--difference-in-differences-and-the-att).
+  - On *this* (unmatched) panel the control pool belongs to no restoration site,
+    so `prepare_panel` gives those pixels singleton clusters and site clustering
+    pools only the treated pixels — the design effect here is a lower bound. The
+    honest run is the **matched** DiD in §2c, where the cluster count drops to
+    the ~6 real sites.
+- `plot_event_study(event_study)` — ATT vs event time, drawn once per clustering
+  level (`..._did_event_study_tidy.png` is site-clustered, the one to report;
+  `..._did_event_study_pixel_clustered.png` is the pixel-level contrast — same
+  points, narrower bands). **Reading it:** the pre-treatment points (left of the
+  onset line) are the parallel-trends check and should straddle zero; the
+  post-treatment points trace how the effect evolves after restoration.
 - `plot_raw_burn_rate_by_year` / `plot_raw_burn_rate_by_event_time` — the
   *unadjusted* burn rate for treated vs control, by calendar year (shared
   dry-year swings appear in both groups) and re-aligned to event time. This is
@@ -441,9 +458,26 @@ Contents:
   load-bearing word: every unmatched candidate is dropped, so the DiD's control
   pool becomes *exactly* the matched controls), carrying the match's
   `site_id`/`pair_id` — then the same `did.prepare_panel` → `did.fit_att`
-  pipeline as §2b. The ATT is now identified against each treated pixel's
-  matched control(s): covariate overlap from the match *plus* differencing-out
-  of time-invariant confounders from the DiD.
+  pipeline as §2b, again at **both** clustering levels. The ATT is now identified
+  against each treated pixel's matched control(s): covariate overlap from the
+  match *plus* differencing-out of time-invariant confounders from the DiD.
+- This is the panel where the clustering choice actually bites. Each matched
+  control carries its treated partner's `site_id`, so `cluster_by="site"` runs on
+  the ~6 **real** restoration sites (`estimate_att` warns about the count) rather
+  than on the singleton clusters the unmatched panel hands out. Expect
+  `design_effect` well above 1 in `cluster_comparison_matched`.
+- `did.att_collapsed(panel_m, response="burned", cluster_by="site")` — the
+  by-hand cross-check on the same matched panel, and the only site-clustered ATT
+  in the notebook that needs **no optional backend**, so it still reports when the
+  `differences` fit fails. One pre/post change per pixel → one `theta_s` per site
+  → SE from the spread of the `theta_s`, with the `G/(G−1)` finite-cluster
+  correction and a `t(G−1)` interval. It returns `std_error_site`,
+  `std_error_pixel` and their ratio whichever level you ask for, plus a `by_site`
+  table of the per-site `theta_s` — the "single number per site" the site SE is
+  the spread of. A disagreement with the Callaway–Sant'Anna number is expected,
+  not a bug: this design is a single pre/post contrast with no covariate
+  adjustment. It raises on the *unmatched* panel, where controls sit in no site
+  and there is no within-site contrast to form.
 
 ### §3 — Build the tidy pixel-year frame (levels route)
 
@@ -832,6 +866,11 @@ $$\widehat{\mathrm{ATT}}(g,t) = \mathbb{E}_n\!\left[ \left( \underbrace{\frac{G_
     (`boot_iterations`, default 1000); `cluster_by="pixel"` keeps the instant
     analytic SEs. Check the `std_error` column header — `bootstrap` vs
     `analytic` — to see which you got.
+  - *Side by side.* The notebook fits both levels and hands the two aggregations
+    to `did.compare_cluster_levels`, which stacks them into one frame of
+    `att` / `std_error` / `ci_low` / `ci_high` / `se_kind` / `design_effect`
+    (`did.tidy_att` normalises a single aggregation the same way). Identical
+    `att` down the column is the check that nothing but the variance moved.
   - *Cross-check.* `att_collapsed` does the same thing by hand and
     dependency-free: collapse each pixel to one pre/post change, difference
     treated against control **within each site** to get one $\theta_s$ per site,

@@ -36,6 +36,10 @@ What this module adds on top of ``build_frame``'s output:
 * :func:`aggregate_att` -- collapse the group-time ATTs to an overall ATT and to a
   **dynamic / event-study** path (the pre-treatment coefficients are the
   parallel-trends check).
+* :func:`tidy_att` / :func:`compare_cluster_levels` -- flatten an aggregation into
+  plain columns, and stack the site- and pixel-clustered runs of the *same* ATT in
+  one table so the design effect (how much the pixel-level SE was deflated) is a
+  column rather than a claim.
 * :func:`att_collapsed` -- the transparent, dependency-free cross-check: collapse
   each pixel to one pre/post change and regress it on ``treated``, with the same
   ``cluster_by`` toggle. Same estimand, arithmetic you can read off the page.
@@ -827,6 +831,160 @@ def aggregate_att(
                  "group": "group", "calendar": "calendar"}
         return did.aggte(att, type=alias.get(kind, kind))
     raise ValueError(f"unknown backend {backend!r}.")
+
+
+# ---------------------------------------------------------------------------
+# 5a. Reading the aggregations: tidy tables + the site-vs-pixel contrast
+# ---------------------------------------------------------------------------
+# `differences` returns its aggregations under a MultiIndex column header whose
+# middle level names the SE flavour -- "bootstrap" when clustered, "analytic"
+# when not. That label is the quickest confirmation of which standard errors you
+# are looking at, so the tidier keeps it rather than flattening it away.
+_SE_KINDS = ("bootstrap", "analytic")
+_ATT_CANDIDATES = ("att", "estimate", "coefficient", "coef", "point_estimate")
+_SE_CANDIDATES = ("std_error", "std.error", "standard_error", "stderr", "se")
+_LOW_CANDIDATES = ("ci_low", "lower", "conf_low", "conf.low", "cband_lower")
+_HIGH_CANDIDATES = ("ci_high", "upper", "conf_high", "conf.high", "cband_upper")
+
+
+def _first_col(columns, candidates: Sequence[str]) -> Optional[str]:
+    """First column matching a candidate name (exact match wins, then substring)."""
+    lower = {str(c).lower(): c for c in columns}
+    for cand in candidates:
+        if cand in lower:
+            return lower[cand]
+    for cand in candidates:
+        for lc, orig in lower.items():
+            if cand in lc:
+                return orig
+    return None
+
+
+def tidy_att(aggregation) -> pd.DataFrame:
+    """Flatten an :func:`aggregate_att` result into plain, comparable columns.
+
+    The backends disagree on shape -- ``differences`` hands back a three-level
+    MultiIndex column header, R ``did`` something else again -- which makes two
+    aggregations awkward to put side by side. This normalises one into
+    ``att`` / ``std_error`` / ``ci_low`` / ``ci_high`` / ``se_kind``, keeping the
+    original index (``0`` for the ``"simple"`` aggregation, ``relative_period``
+    for the event study) so rows still line up across clustering levels.
+
+    ``ci_low`` / ``ci_high`` are whatever interval the backend reported next to the
+    estimate -- for ``differences`` that is its **simultaneous** confidence band
+    across the aggregation's cells, which is wider than a pointwise 95% interval
+    by design. ``se_kind`` is the backend's own label for the standard errors --
+    ``"bootstrap"`` when they were clustered, ``"analytic"`` when they are the
+    closed-form pixel-level ones (see the module docstring for why those are the
+    same thing). It is carried through untouched, so it is evidence rather than
+    a restatement of what was requested.
+    """
+    if isinstance(aggregation, pd.DataFrame):
+        df = aggregation.copy()
+    else:
+        try:
+            df = pd.DataFrame(aggregation)
+        except Exception as exc:  # pragma: no cover - backend-specific shapes
+            raise TypeError(
+                "tidy_att expects the tabular aggregation returned by "
+                f"aggregate_att (backend='differences'), got {type(aggregation)!r}."
+            ) from exc
+
+    se_kind = None
+    if isinstance(df.columns, pd.MultiIndex):
+        for level in range(df.columns.nlevels):
+            hits = [
+                str(v).lower()
+                for v in df.columns.get_level_values(level)
+                if str(v).lower() in _SE_KINDS
+            ]
+            if hits:
+                se_kind = hits[0]
+                break
+        df.columns = [
+            "_".join(str(part) for part in tup if str(part) != "").strip("_")
+            for tup in df.columns
+        ]
+
+    att_col = _first_col(df.columns, _ATT_CANDIDATES)
+    if att_col is None:
+        raise ValueError(
+            "could not find the ATT column on the aggregation "
+            f"(columns: {list(df.columns)})."
+        )
+    out = pd.DataFrame(index=df.index)
+    out["att"] = pd.to_numeric(df[att_col], errors="coerce")
+    for name, candidates in (
+        ("std_error", _SE_CANDIDATES),
+        ("ci_low", _LOW_CANDIDATES),
+        ("ci_high", _HIGH_CANDIDATES),
+    ):
+        col = _first_col(df.columns, candidates)
+        if col is not None:
+            out[name] = pd.to_numeric(df[col], errors="coerce")
+    out["se_kind"] = se_kind if se_kind is not None else "unknown"
+    return out
+
+
+def compare_cluster_levels(
+    aggregations: Mapping[str, object],
+    baseline: Optional[str] = "pixel",
+) -> pd.DataFrame:
+    """Stack the same ATT estimated at different clustering levels, side by side.
+
+    The point of the table: ``cluster_by`` never moves the point estimate, only
+    the variance, so putting the two runs in one frame makes the *only* thing
+    that changed impossible to miss -- and turns the "how much was the pixel-level
+    SE deflated?" question into a column.
+
+    Parameters
+    ----------
+    aggregations : mapping
+        ``{level_name: aggregation}``, e.g.
+        ``{"site": overall_site, "pixel": overall_pixel}`` where each value is an
+        :func:`aggregate_att` result **of the same kind** (both ``"simple"``, or
+        both ``"event"``) fitted on the same panel.
+    baseline : str or None, default ``"pixel"``
+        Key whose standard error the ``design_effect`` column divides by. With the
+        default, ``design_effect`` reads directly as "how many times wider the
+        honest interval is". Pass ``None`` to omit the column.
+
+    Returns
+    -------
+    DataFrame
+        :func:`tidy_att`'s columns plus ``design_effect``, indexed by
+        ``(cluster_by, <the aggregation's own index>)``.
+
+    Warns
+    -----
+    If the point estimates disagree across levels -- they should be identical, so
+    a mismatch means the aggregations came from different fits and the design
+    effect compares two unrelated numbers.
+    """
+    if not aggregations:
+        raise ValueError("compare_cluster_levels needs at least one aggregation.")
+    tidied = {str(level): tidy_att(agg) for level, agg in aggregations.items()}
+
+    atts = [t["att"].to_numpy(dtype=float) for t in tidied.values()]
+    if len({a.shape for a in atts}) == 1:
+        spread = float(np.nanmax(np.abs(np.array(atts) - atts[0])))
+        if spread > 1e-8:
+            warnings.warn(
+                f"the point estimates differ by up to {spread:.3g} across "
+                "clustering levels, but cluster_by only changes the variance. "
+                "These aggregations are not from the same fit/panel, so the "
+                "design effect below compares unrelated estimates.",
+                stacklevel=2,
+            )
+
+    out = pd.concat(tidied)
+    out.index = out.index.set_names("cluster_by", level=0)
+    if baseline is not None and str(baseline) in tidied and "std_error" in out:
+        ref = tidied[str(baseline)]["std_error"]
+        out["design_effect"] = out["std_error"].to_numpy() / ref.reindex(
+            out.index.get_level_values(-1)
+        ).to_numpy()
+    return out
 
 
 # ---------------------------------------------------------------------------
