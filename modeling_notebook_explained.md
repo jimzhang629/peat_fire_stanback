@@ -312,6 +312,16 @@ Contents:
   years?" picture (per-year covariates only; a static layer is flat by
   construction). Its annotated correlation is descriptive — with a handful of
   panel years it is far too noisy to be inference.
+- `plot_annual_burned_area_vs_covariate` — the same two annual numbers plotted
+  against *each other*: mask-aggregate covariate on x, mask burned area on y, one
+  labelled point per year. The quickest glance, and the most limited: one point
+  per panel year, and a static covariate puts every point on a single vertical
+  line, because collapsing the mask to one number per year discards exactly the
+  spatial variation those layers carry.
+- **The split that matters:** the first two views bin *within* each year, so they
+  keep the spatial variation (~20k pixels per year) and work for static layers;
+  the last two collapse the mask to one number per year, so they show the
+  year-to-year driver and go degenerate on anything static.
 - All three take `metric`: `"area_ha"` (absolute hectares — a count, so a bin
   covering more of the landscape can lead just by being bigger), `"rate"` (burned
   fraction of the bin's pixels, exposure-free), `"share"` (percent of *that
