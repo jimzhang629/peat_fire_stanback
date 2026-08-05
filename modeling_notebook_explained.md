@@ -807,6 +807,11 @@ $$\widehat{\mathrm{ATT}}(g,t) = \mathbb{E}_n\!\left[ \left( \underbrace{\frac{G_
     site-clustered SE is much more honest than the pixel one but still
     optimistic; read it with the small-G caution of M6 and lean on the event
     study.
+  - *Full derivation.* `clustered_standard_errors_explained.md` builds this up
+    from a sample mean: what an influence function is (with a leave-one-out check
+    against the real doubly-robust estimator), how it becomes a standard error,
+    what a multiplier bootstrap does, and why clustering can only live on the
+    bootstrap path. Every number in it is reproducible output.
 - **Interpretation.** The outcome is 0/1 and the outcome model linear-in-
   probability, so the ATT is an absolute change in $\Pr(\text{burn})$ per
   pixel-year (e.g. −0.03 = 3 percentage points fewer burns). That makes the
