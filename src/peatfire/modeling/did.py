@@ -813,12 +813,32 @@ def aggregate_att(
                 f"clustering on {cluster_var!r} needs boot_iterations > 0; "
                 "the analytic standard errors have no cluster argument."
             )
-        return att.aggregate(
-            alias.get(kind, kind),
-            cluster_var=cluster_var,
-            boot_iterations=int(boot_iterations),
-            random_state=random_state,
-        )
+        try:
+            return att.aggregate(
+                alias.get(kind, kind),
+                cluster_var=cluster_var,
+                boot_iterations=int(boot_iterations),
+                random_state=random_state,
+            )
+        except IndexError as exc:
+            if "axis 1 with size 0" not in str(exc):
+                raise
+            raise ValueError(
+                f"`differences` could not compute the {kind!r} ATT aggregation: "
+                "the aggregation backend received no group-time effects in the "
+                "subset it needed to combine. For kind='simple' this is the "
+                "post-treatment group-time ATT list. This is a support/bookkeeping "
+                "problem after the backend validates the matched panel, not an "
+                "import problem: check the preceding `differences` warnings about "
+                "'always treated' entities and event/cohort dates after the panel. "
+                "Those warnings mean treated pixels may be entering without an "
+                "observed pre-period, with a cohort year outside their observed "
+                "panel, or with cohort/restoration-year bookkeeping that leaves no "
+                "valid post-treatment cells for this matched DiD aggregation. "
+                "Widen the panel year window, verify the restoration-year column "
+                "used by prepare_panel(), inspect g/year counts on the matched "
+                "panel, or run att_collapsed() as the matched pre/post cross-check."
+            ) from exc
     if backend == "rpy2":
         from rpy2.robjects.packages import importr
 
