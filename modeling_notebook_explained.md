@@ -259,12 +259,17 @@ Contents:
     grid (`how="max"`: any burned sub-cell lights the cell), then read the value
     at each pixel's `(x, y)`. Years without coverage stay NaN.
 - `did.prepare_panel(panel, restoration_yr_col, site_col="Proj_Name")` adds the
-  two bookkeeping columns the estimator needs:
+  three bookkeeping columns the estimator needs:
   - `unit_id` — one stable entity id per distinct `(x, y)` pixel.
   - `g` — the Callaway–Sant'Anna **cohort**: each site's first-treatment
     (restoration) year, looked up from the panel itself via `did.attach_cohort`;
     control pixels have no site and get `g = 0` (never-treated). It errors
     loudly if a *treated* row has no cohort year.
+  - `site_id` — the key the standard errors cluster on (see M7). Left alone if
+    the frame already carries it (the matched panel does, with each control
+    inheriting its treated partner's site); otherwise built from `Proj_Name`,
+    with unmatched control pixels — which belong to no site — given their own
+    singleton cluster and a warning saying how many.
 - `did.fit_att(panel, covariates=covs, response="burned")` runs the whole
   estimator and returns `(att, overall, event_study)`:
   - `build_panel` — validates and reshapes to a `(unit_id, year)`-indexed
@@ -772,12 +777,36 @@ $$\widehat{\mathrm{ATT}}(g,t) = \mathbb{E}_n\!\left[ \left( \underbrace{\frac{G_
   - `calendar` — ATT by calendar year (is the effect concentrated in dry
     years?).
 - **Inference.** SEs come from the influence function of each
-  $\mathrm{ATT}(g,t)$, clustered at the entity (pixel) level by the
-  `differences` backend, with a multiplier bootstrap for simultaneous bands.
-  Castro cluster at the *village* level; our analogue is the restoration site,
-  which the `rpy2`/R backend supports via `clustervars="site_id"` — with few NC
-  sites, prefer that when available, and read all DiD inference with the small-G
-  caution of M6.
+  $\mathrm{ATT}(g,t)$, and **the level they are clustered at is a parameter**:
+  `cluster_by="site"` (the default) or `cluster_by="pixel"`, on `estimate_att`,
+  `fit_att` and `att_collapsed` alike. The point estimate is identical either
+  way; only the variance moves.
+  - *Why site.* Restoration is assigned to a **site**, not a pixel. Every pixel
+    inside one site shares its canal blocks, its weather, its water table — so
+    the thousands of pixel-years are not thousands of independent draws.
+    Clustering at the pixel level lets the SE shrink like $1/\sqrt{n_{\text{pix}}}$
+    forever, which is arithmetic, not evidence. The site-clustered SE instead
+    plateaus at whatever the ~6 sites can tell you. Castro cluster at the
+    *village* level for the same reason; the restoration site is our analogue.
+  - *How.* Clustering above the entity level exists **only on the multiplier-
+    bootstrap path** — the closed-form influence-function SEs take no cluster
+    argument in `differences` or in R `did`. So `cluster_by="site"` draws one
+    Rademacher weight per site and reruns the bootstrap
+    (`boot_iterations`, default 1000); `cluster_by="pixel"` keeps the instant
+    analytic SEs. Check the `std_error` column header — `bootstrap` vs
+    `analytic` — to see which you got.
+  - *Cross-check.* `att_collapsed` does the same thing by hand and
+    dependency-free: collapse each pixel to one pre/post change, difference
+    treated against control **within each site** to get one $\theta_s$ per site,
+    average those, and take the SE from their spread with $t(G-1)$ — the
+    textbook Bertrand–Duflo–Mullainathan collapse. It returns the per-site
+    $\theta_s$ table and reports both SEs plus their ratio (`design_effect`), so
+    the deflation is a number you can quote.
+  - *Caveat.* Cluster-robust inference is asymptotic in the number of
+    **clusters**, and ~6 sites is far below the usual 30–50 rule of thumb. The
+    site-clustered SE is much more honest than the pixel one but still
+    optimistic; read it with the small-G caution of M6 and lean on the event
+    study.
 - **Interpretation.** The outcome is 0/1 and the outcome model linear-in-
   probability, so the ATT is an absolute change in $\Pr(\text{burn})$ per
   pixel-year (e.g. −0.03 = 3 percentage points fewer burns). That makes the
@@ -925,7 +954,7 @@ Castro et al. evaluate canal-block rewetting → peat fire in Kalimantan; the
 | Estimator = Callaway & Sant'Anna staggered DiD, doubly robust (`csdid`, Stata) | `did.fit_att` (`differences` or R `did` via rpy2) |
 | Outcome eq. covariates incl. temporal + 4-neighbour spatial fire lags | `add_fire_lags` |
 | Group = construction vintage; controls = never-/not-yet-treated | `attach_cohort`: `g` = restoration year, 0 = never |
-| SEs clustered at village | cluster on `site_id` |
+| SEs clustered at village | `cluster_by="site"` (default) → cluster on `site_id` |
 | Headline = ATT × rewetted area = avoided burned area | `avoided_area(att, area_ha)` |
 
 Caveats where NC differs, and it matters:

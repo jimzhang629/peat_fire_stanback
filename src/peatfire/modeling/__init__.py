@@ -52,8 +52,10 @@ from .models import (
     odds_ratios,
 )
 from .did import (  # staggered DiD alternative (Castro et al. 2026)
+    CLUSTER_LEVELS,
     add_fire_lags,
     aggregate_att,
+    att_collapsed,
     attach_cohort,
     avoided_area,
     build_panel,
@@ -167,8 +169,10 @@ __all__ = [
     "fit_mixed_logit",
     "fit_ols_clustered",
     "odds_ratios",
+    "CLUSTER_LEVELS",
     "add_fire_lags",
     "aggregate_att",
+    "att_collapsed",
     "attach_cohort",
     "avoided_area",
     "build_panel",
