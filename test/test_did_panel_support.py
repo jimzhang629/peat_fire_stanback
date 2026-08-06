@@ -14,6 +14,7 @@ _DID = module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_DID)
 build_panel = _DID.build_panel
 restrict_to_supported_cohorts = _DID.restrict_to_supported_cohorts
+panel_support_table = _DID.panel_support_table
 
 
 class BuildPanelSupportTests(unittest.TestCase):
@@ -73,6 +74,26 @@ class RestrictToSupportedCohortsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "non-numeric cohort"):
             restrict_to_supported_cohorts(frame, range(2019, 2025))
+
+
+class PanelSupportTableTests(unittest.TestCase):
+    def test_reports_effective_response_window_and_spanning_entities(self):
+        frame = pd.DataFrame(
+            [
+                {"unit_id": 1, "year": 2018, "burned": 0, "g": 2019},
+                {"unit_id": 1, "year": 2019, "burned": 1, "g": 2019},
+                {"unit_id": 2, "year": 2019, "burned": 0, "g": 2019},
+                {"unit_id": 3, "year": 2018, "burned": 0, "g": 0},
+                {"unit_id": 3, "year": 2019, "burned": None, "g": 0},
+            ]
+        )
+
+        result = panel_support_table(frame).set_index("g")
+
+        self.assertEqual(result.loc[2019, "spanning_entities"], 1)
+        self.assertEqual(result.loc[2019, "pre_entities"], 1)
+        self.assertEqual(result.loc[2019, "post_entities"], 2)
+        self.assertEqual(result.loc[0, "last_outcome_year"], 2018)
 
 
 if __name__ == "__main__":

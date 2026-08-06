@@ -169,6 +169,58 @@ def restrict_to_supported_cohorts(
     return frame.loc[control | supported].copy()
 
 
+def panel_support_table(
+    frame: pd.DataFrame,
+    response: str = "burned",
+    cohort_col: str = "g",
+    entity: str = "unit_id",
+    time: str = "year",
+) -> pd.DataFrame:
+    """Summarise actual pre/post outcome support for each DiD cohort.
+
+    The calculation uses non-null response rows, not the configured year range.
+    This exposes stale notebook objects, missing response rasters, or merges that
+    silently shorten a nominally long panel before an expensive ATT fit.
+    ``spanning_entities`` counts entities observed both before and on/after their
+    cohort year; a treated cohort with zero cannot identify a post-treatment ATT.
+    """
+    required = [response, cohort_col, entity, time]
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(f"panel support table needs columns {missing}.")
+
+    observed = frame.dropna(subset=required).copy()
+    if observed.empty:
+        raise ValueError(f"no non-null {response!r} observations are available.")
+    observed[cohort_col] = pd.to_numeric(
+        observed[cohort_col], errors="raise"
+    ).astype(int)
+
+    rows = []
+    for cohort, group in observed.groupby(cohort_col, sort=True):
+        per_entity = group.groupby(entity)[time].agg(first_year="min", last_year="max")
+        if cohort == NEVER_TREATED:
+            pre = post = spanning = len(per_entity)
+        else:
+            pre_mask = per_entity["first_year"] < cohort
+            post_mask = per_entity["last_year"] >= cohort
+            pre, post = int(pre_mask.sum()), int(post_mask.sum())
+            spanning = int((pre_mask & post_mask).sum())
+        rows.append(
+            {
+                cohort_col: cohort,
+                "first_outcome_year": int(group[time].min()),
+                "last_outcome_year": int(group[time].max()),
+                "entities": int(group[entity].nunique()),
+                "pre_entities": pre,
+                "post_entities": post,
+                "spanning_entities": spanning,
+                "outcome_rows": len(group),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # 0b. Match first: restrict the panel to the matched pixels (Castro's two-step)
 # ---------------------------------------------------------------------------
