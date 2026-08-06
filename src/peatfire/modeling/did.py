@@ -113,7 +113,64 @@ BOOT_ITERATIONS = 1000
 
 
 # ---------------------------------------------------------------------------
-# 0. Match first: restrict the panel to the matched pixels (Castro's two-step)
+# 0. Outcome-window support: keep only cohorts a chosen product can identify
+# ---------------------------------------------------------------------------
+def restrict_to_supported_cohorts(
+    frame: pd.DataFrame,
+    years: Iterable[int],
+    restoration_yr_col: str = "End_Yr",
+) -> pd.DataFrame:
+    """Keep controls and treatment cohorts bracketed by outcome coverage.
+
+    A staggered DiD needs at least one outcome year before treatment and one in
+    or after treatment.  For an outcome window ``[first, last]``, eligible
+    cohorts therefore satisfy ``first < g <= last``.  Never-treated controls
+    (null ``restoration_yr_col``) are always retained.
+
+    Apply this *before* score estimation and matching.  Filtering only the final
+    panel can leave controls whose treated partner belonged to an unsupported
+    cohort.  This helper makes the product choice explicit: for FireCCIS311's
+    2019--2024 window a 2019 cohort cannot be estimated, while a longer MCD64A1
+    window can retain it.
+    """
+    if restoration_yr_col not in frame.columns:
+        raise ValueError(f"{restoration_yr_col!r} is missing from the frame.")
+    observed_years = sorted({int(year) for year in years})
+    if not observed_years:
+        raise ValueError("`years` must contain at least one outcome year.")
+
+    first, last = observed_years[0], observed_years[-1]
+    raw_cohort = frame[restoration_yr_col]
+    cohort = pd.to_numeric(raw_cohort, errors="coerce")
+    invalid = raw_cohort.notna() & cohort.isna()
+    if invalid.any():
+        bad = raw_cohort.loc[invalid].astype(str).unique()[:5].tolist()
+        raise ValueError(
+            f"{restoration_yr_col!r} contains {int(invalid.sum())} non-numeric "
+            f"cohort value(s), for example {bad}."
+        )
+    control = cohort.isna()
+    supported = cohort.gt(first) & cohort.le(last)
+    excluded = cohort.notna() & ~supported
+    if excluded.any():
+        counts = (
+            cohort.loc[excluded]
+            .astype(int)
+            .value_counts()
+            .sort_index()
+            .to_dict()
+        )
+        warnings.warn(
+            f"outcome coverage {first}--{last} cannot identify cohort row(s) "
+            f"outside {first} < g <= {last}; excluding cohorts {counts} before "
+            "matching. Controls are retained.",
+            stacklevel=2,
+        )
+    return frame.loc[control | supported].copy()
+
+
+# ---------------------------------------------------------------------------
+# 0b. Match first: restrict the panel to the matched pixels (Castro's two-step)
 # ---------------------------------------------------------------------------
 def restrict_panel_to_matched(
     panel: pd.DataFrame,
@@ -484,12 +541,56 @@ def build_panel(
             f"{dup} duplicate (entity, time) rows -- the panel must be unique on "
             f"({entity}, {time}). Aggregate to one row per unit-year first."
         )
+
+    # A cohort is an entity-level attribute, not the row's current treatment
+    # status.  Checking this here also catches callers that accidentally put the
+    # per-period `treated` indicator in `g`.
+    cohort_counts = panel.groupby(entity)[cohort_col].nunique(dropna=False)
+    if (cohort_counts > 1).any():
+        raise ValueError(
+            f"{int((cohort_counts > 1).sum())} entity(ies) have more than one "
+            f"{cohort_col!r} value across years. The cohort must be each unit's "
+            "fixed first-treatment year (and 0 for never-treated controls), not "
+            "the time-varying treatment indicator."
+        )
+
     treated_groups = panel.loc[panel[cohort_col] > 0, cohort_col].nunique()
     controls = int((panel[cohort_col] == NEVER_TREATED).any())
     if treated_groups == 0 or not controls:
         raise ValueError(
             "Need both treated cohorts (g>0) and never-treated controls (g=0); "
             f"found {treated_groups} treated cohort(s), controls present={bool(controls)}."
+        )
+
+    # `differences` silently drops entities observed only on/after their cohort
+    # ("always treated") and treats cohorts after an entity's last observation as
+    # never treated.  If that removes every treated entity, ATTgt.fit() can still
+    # finish but simple aggregation later crashes while stacking an empty list.
+    # Detect that lack of identifying support before doing the expensive fit.
+    flat = panel.reset_index()
+    support = flat.groupby(entity).agg(
+        first_year=(time, "min"),
+        last_year=(time, "max"),
+        cohort=(cohort_col, "first"),
+    )
+    treated_support = support[support["cohort"] > NEVER_TREATED]
+    always_treated = treated_support["first_year"] >= treated_support["cohort"]
+    treatment_after_panel = treated_support["last_year"] < treated_support["cohort"]
+    usable = ~(always_treated | treatment_after_panel)
+    if not usable.any():
+        first = flat[time].min()
+        last = flat[time].max()
+        raise ValueError(
+            "No treated entity has both a pre-treatment and an at-or-after-"
+            "treatment outcome observation after response coverage is applied. "
+            f"Of {len(treated_support)} treated entities, "
+            f"{int(always_treated.sum())} are first observed in/on their cohort "
+            "year ('always treated') and "
+            f"{int(treatment_after_panel.sum())} have treatment after their last "
+            f"observation. The retained outcome years are {first}--{last}. "
+            "Widen the fire-response year coverage or verify the restoration "
+            "years passed to prepare_panel(); without at least one treated unit "
+            "spanning its cohort, a post-treatment ATT is not identified."
         )
 
     if carry:

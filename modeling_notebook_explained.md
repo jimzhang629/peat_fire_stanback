@@ -1007,17 +1007,24 @@ Caveats where NC differs, and it matters:
 - **Control geometry.** Our controls are matched landscape peat, not a
   within-buffer donut, so conditional parallel trends leans harder on match
   quality (the Stage 6 balance checks) than theirs does.
-- **Fire-history coverage.** FireCCIS311 starts in 2019, so for 2019/2020
-  vintages the `g−1`/`g−2` lags and the 2015 drought benchmark fall outside
-  coverage and are silently dropped from the trajectory vector — those vintages
-  match on the prognostic/propensity path alone. Extending fire history earlier
-  restores them.
+- **Fire-history coverage and the estimand.** The notebook now configures the
+  product, years, and native-scale analysis grid together. Before scores or
+  matching, `restrict_to_supported_cohorts` keeps controls and only treatment
+  vintages satisfying `first outcome year < g <= last outcome year`. With
+  FireCCIS311 (2019–2024), the current data therefore estimate the ATT for the
+  supported 2021/2023 cohorts and exclude 2019 (no pre-period) and 2026 (no
+  post-period). Selecting MCD64A1 (configured as 2001–2024 at 500 m) recovers the
+  2019 cohort but still excludes 2026. Switching products requires restarting
+  the kernel and rerunning from the configuration cell so grids, responses,
+  scores, and matches are rebuilt rather than mixing 300 m and 500 m objects.
 - **Small control pool.** Per-vintage + no-replacement + land-cover exact-match
   constrains candidates hard; watch the per-cohort drop counts and loosen the
   caliper if too many treated pixels go unmatched (the same effect behind
   Castro's failed 4 km robustness check).
-- **Site-level clustering needs the rpy2 backend** — `differences` clusters at
-  the pixel level.
+- **Few site clusters.** Both backends now support the requested site-level
+  clustering, but only a handful of restoration sites remain. Cluster-robust
+  inference is asymptotic in the number of sites, so report the event study and
+  `att_collapsed()` cross-check alongside the bootstrap interval.
 - **Negative control.** Castro's planned-but-unbuilt placebo maps to running the
   pipeline on *planned but not-yet-restored* sites at their scheduled years:
   any "effect" found there flags upstream confounding.

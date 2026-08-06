@@ -64,6 +64,7 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     fit_att,
     prepare_panel,
     restrict_panel_to_matched,
+    restrict_to_supported_cohorts,
 )
 from .climate import (  # GHCN station points -> gridded climate covariates
     build_annual_climate,
@@ -194,6 +195,7 @@ __all__ = [
     "fit_att",
     "prepare_panel",
     "restrict_panel_to_matched",
+    "restrict_to_supported_cohorts",
     "add_matching_scores",
     "add_prognostic_score_series",
     "add_propensity_score_series",
