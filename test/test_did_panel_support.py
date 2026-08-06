@@ -115,7 +115,11 @@ class AttachClusterColumnTests(unittest.TestCase):
 
         attach_cluster_column(att, "site_id")
 
-        self.assertEqual(att._data_matrix["site_id"].tolist(), [0, 0, 1, 1])
+        # differences reserves zero in its cluster-membership construction.  In
+        # particular, a group-time comparison containing only the first cluster
+        # must still have one cluster column rather than an empty matrix.
+        self.assertEqual(att._data_matrix["site_id"].tolist(), [1, 1, 2, 2])
+        self.assertGreater(att._data_matrix["site_id"].min(), 0)
         self.assertTrue(pd.api.types.is_integer_dtype(att._data_matrix["site_id"]))
 
 
