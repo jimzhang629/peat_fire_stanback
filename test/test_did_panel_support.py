@@ -15,6 +15,7 @@ _SPEC.loader.exec_module(_DID)
 build_panel = _DID.build_panel
 restrict_to_supported_cohorts = _DID.restrict_to_supported_cohorts
 panel_support_table = _DID.panel_support_table
+attach_cluster_column = _DID._attach_cluster_column
 
 
 class BuildPanelSupportTests(unittest.TestCase):
@@ -94,6 +95,28 @@ class PanelSupportTableTests(unittest.TestCase):
         self.assertEqual(result.loc[2019, "pre_entities"], 1)
         self.assertEqual(result.loc[2019, "post_entities"], 2)
         self.assertEqual(result.loc[0, "last_outcome_year"], 2018)
+
+
+class AttachClusterColumnTests(unittest.TestCase):
+    def test_encodes_string_site_labels_for_differences_bootstrap(self):
+        index = pd.MultiIndex.from_product(
+            [[1, 2], [2019, 2020]], names=["unit_id", "year"]
+        )
+        data = pd.DataFrame(
+            {"site_id": ["site-b", "site-b", "site-a", "site-a"]}, index=index
+        )
+
+        class FakeATT:
+            pass
+
+        att = FakeATT()
+        att.data = data
+        att._data_matrix = pd.DataFrame({"burned": 0}, index=index)
+
+        attach_cluster_column(att, "site_id")
+
+        self.assertEqual(att._data_matrix["site_id"].tolist(), [0, 0, 1, 1])
+        self.assertTrue(pd.api.types.is_integer_dtype(att._data_matrix["site_id"]))
 
 
 if __name__ == "__main__":
