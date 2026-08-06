@@ -14,6 +14,8 @@ _DID = module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_DID)
 build_panel = _DID.build_panel
 restrict_to_supported_cohorts = _DID.restrict_to_supported_cohorts
+panel_support_table = _DID.panel_support_table
+aggregate_att = _DID.aggregate_att
 
 
 class BuildPanelSupportTests(unittest.TestCase):
@@ -73,6 +75,55 @@ class RestrictToSupportedCohortsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "non-numeric cohort"):
             restrict_to_supported_cohorts(frame, range(2019, 2025))
+
+
+class PanelSupportTableTests(unittest.TestCase):
+    def test_reports_effective_response_window_and_spanning_entities(self):
+        frame = pd.DataFrame(
+            [
+                {"unit_id": 1, "year": 2018, "burned": 0, "g": 2019},
+                {"unit_id": 1, "year": 2019, "burned": 1, "g": 2019},
+                {"unit_id": 2, "year": 2019, "burned": 0, "g": 2019},
+                {"unit_id": 3, "year": 2018, "burned": 0, "g": 0},
+                {"unit_id": 3, "year": 2019, "burned": None, "g": 0},
+            ]
+        )
+
+        result = panel_support_table(frame).set_index("g")
+
+        self.assertEqual(result.loc[2019, "spanning_entities"], 1)
+        self.assertEqual(result.loc[2019, "pre_entities"], 1)
+        self.assertEqual(result.loc[2019, "post_entities"], 2)
+        self.assertEqual(result.loc[0, "last_outcome_year"], 2018)
+
+
+class AggregateAttDiagnosticsTests(unittest.TestCase):
+    class ClusterFailureOnly:
+        peatfire_cluster_var = "site_id"
+        peatfire_boot_iterations = 1000
+        peatfire_random_state = 42
+
+        def aggregate(self, kind, cluster_var, boot_iterations, random_state):
+            if cluster_var:
+                raise IndexError("index 0 is out of bounds for axis 1 with size 0")
+            return {"kind": kind, "att": -0.1}
+
+    class NoEffects:
+        peatfire_cluster_var = "site_id"
+        peatfire_boot_iterations = 1000
+
+        def aggregate(self, kind, cluster_var, boot_iterations, random_state):
+            raise IndexError("index 0 is out of bounds for axis 1 with size 0")
+
+    def test_distinguishes_cluster_bootstrap_failure_from_missing_support(self):
+        with self.assertRaisesRegex(RuntimeError, "not evidence.*too early") as caught:
+            aggregate_att(self.ClusterFailureOnly())
+
+        self.assertEqual(caught.exception.unclustered_aggregation["att"], -0.1)
+
+    def test_keeps_support_message_when_unclustered_aggregation_also_fails(self):
+        with self.assertRaisesRegex(ValueError, "no group-time effects"):
+            aggregate_att(self.NoEffects())
 
 
 if __name__ == "__main__":
