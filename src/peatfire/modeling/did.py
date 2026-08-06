@@ -734,9 +734,21 @@ def _attach_cluster_column(att, cluster_var: str) -> None:
     """
     try:
         matrix = att._data_matrix
-        att._data_matrix[cluster_var] = att.data[cluster_var].loc[
+        cluster = att.data[cluster_var].loc[
             lambda s: s.index.isin(matrix.index)
         ]
+        # `differences` 0.3.0 feeds this column through numpy in the multiplier
+        # bootstrap.  Object/string labels (the normal representation of our
+        # site ids) can leave its cluster-membership matrix with zero columns and
+        # make an otherwise valid `simple` aggregation fail with the thoroughly
+        # misleading ``index 0 is out of bounds for axis 1 with size 0``.  The
+        # labels themselves carry no statistical information: clustering only
+        # needs their equivalence classes.  Stable integer codes therefore retain
+        # exactly the same groups while avoiding that backend bug.
+        codes, _ = pd.factorize(cluster, sort=False)
+        att._data_matrix[cluster_var] = pd.Series(
+            codes, index=cluster.index, name=cluster_var
+        )
     except (AttributeError, KeyError, TypeError) as exc:  # pragma: no cover
         raise RuntimeError(
             f"could not attach the clustering key {cluster_var!r} to the fitted "
@@ -745,7 +757,7 @@ def _attach_cluster_column(att, cluster_var: str) -> None:
             "straight to ATTgt.fit, or use backend='rpy2' / att_collapsed() for "
             "site-clustered standard errors."
         ) from exc
-    if att._data_matrix[cluster_var].isna().any():  # pragma: no cover
+    if (att._data_matrix[cluster_var] < 0).any():  # pragma: no cover
         raise RuntimeError(
             f"{cluster_var!r} came out partly null on the fitted design matrix, so "
             "some units would land in no cluster. Check that every panel row "
