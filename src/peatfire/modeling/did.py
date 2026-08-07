@@ -798,14 +798,16 @@ def _attach_cluster_column(att, cluster_var: str) -> None:
         # make an otherwise valid `simple` aggregation fail with the thoroughly
         # misleading ``index 0 is out of bounds for axis 1 with size 0``.  The
         # labels themselves carry no statistical information: clustering only
-        # needs their equivalence classes.  Stable integer codes therefore retain
-        # exactly the same groups while avoiding that backend bug.  Do not shift
-        # these codes: pandas/differences use ordinary zero-based category codes,
-        # and an earlier attempted +1 workaround did not fix the aggregation
-        # failure reported by the real matched panel.
+        # needs their equivalence classes.  Stable, *one-based* integer codes
+        # therefore retain exactly the same groups while avoiding that backend
+        # bug.  One-based is important: the bootstrap's cluster-membership helper
+        # treats zero as the omitted/reference value.  With zero-based factor
+        # codes, a group-time comparison involving only the first site produces a
+        # membership matrix with no columns and aggregation fails despite valid
+        # pre/post support (the matched-panel failure that motivated this shim).
         codes, _ = pd.factorize(cluster, sort=False)
         att._data_matrix[cluster_var] = pd.Series(
-            codes, index=cluster.index, name=cluster_var
+            codes + 1, index=cluster.index, name=cluster_var
         )
     except (AttributeError, KeyError, TypeError) as exc:  # pragma: no cover
         raise RuntimeError(
@@ -815,7 +817,7 @@ def _attach_cluster_column(att, cluster_var: str) -> None:
             "straight to ATTgt.fit, or use backend='rpy2' / att_collapsed() for "
             "site-clustered standard errors."
         ) from exc
-    if (att._data_matrix[cluster_var] < 0).any():  # pragma: no cover
+    if (att._data_matrix[cluster_var] <= 0).any():  # pragma: no cover
         raise RuntimeError(
             f"{cluster_var!r} came out partly null on the fitted design matrix, so "
             "some units would land in no cluster. Check that every panel row "
