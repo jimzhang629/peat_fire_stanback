@@ -16,6 +16,8 @@ build_panel = _DID.build_panel
 restrict_to_supported_cohorts = _DID.restrict_to_supported_cohorts
 panel_support_table = _DID.panel_support_table
 attach_cluster_column = _DID._attach_cluster_column
+aggregate_att = _DID.aggregate_att
+validate_differences_results = _DID._validate_differences_results
 
 
 class BuildPanelSupportTests(unittest.TestCase):
@@ -42,6 +44,13 @@ class BuildPanelSupportTests(unittest.TestCase):
         panel = build_panel(self._frame([2009, 2010]), cluster_col=None)
 
         self.assertEqual(panel.index.names, ["unit_id", "year"])
+
+    def test_accepts_an_already_built_panel(self):
+        panel = build_panel(self._frame([2009, 2010]), cluster_col=None)
+
+        rebuilt = build_panel(panel, cluster_col=None)
+
+        pd.testing.assert_frame_equal(rebuilt, panel)
 
     def test_rejects_time_varying_cohort(self):
         frame = self._frame([2009, 2010])
@@ -118,6 +127,57 @@ class AttachClusterColumnTests(unittest.TestCase):
         self.assertEqual(att._data_matrix["site_id"].tolist(), [0, 0, 1, 1])
         self.assertTrue(pd.api.types.is_integer_dtype(att._data_matrix["site_id"]))
 
+
+class AggregateAttDiagnosticsTests(unittest.TestCase):
+    def test_distinguishes_cluster_bootstrap_failure_from_empty_att(self):
+        class FakeATT:
+            peatfire_cluster_var = "site_id"
+            peatfire_boot_iterations = 100
+            peatfire_random_state = 42
+
+            def aggregate(self, kind, cluster_var, boot_iterations, random_state):
+                if cluster_var:
+                    raise IndexError("index 0 is out of bounds for axis 1 with size 0")
+                return pd.DataFrame({"ATT": [0.1]})
+
+        with self.assertRaisesRegex(
+            ValueError, "point aggregation.*multiplier bootstrap failed"
+        ):
+            aggregate_att(FakeATT(), kind="simple")
+
+    def test_keeps_support_diagnosis_when_analytic_retry_also_fails(self):
+        class FakeATT:
+            peatfire_cluster_var = "site_id"
+            peatfire_boot_iterations = 100
+            peatfire_random_state = 42
+
+            def aggregate(self, kind, cluster_var, boot_iterations, random_state):
+                raise IndexError("index 0 is out of bounds for axis 1 with size 0")
+
+        with self.assertRaisesRegex(ValueError, "support/bookkeeping problem"):
+            aggregate_att(FakeATT(), kind="simple")
+
+
+class FittedAttValidationTests(unittest.TestCase):
+    def test_reports_all_nan_post_treatment_effects_before_aggregation(self):
+        from collections import namedtuple
+
+        Element = namedtuple("Element", "cohort time ATT")
+
+        class Aggregate:
+            ntl = [
+                Element(2019, 2018, float("nan")),
+                Element(2019, 2019, float("nan")),
+                Element(2019, 2020, float("nan")),
+            ]
+
+        class FakeATT:
+            _result_dict = {"full_sample": {"aggregate_inst": Aggregate()}}
+
+        with self.assertRaisesRegex(
+            ValueError, "no finite post-treatment ATT estimates.*0/2"
+        ):
+            validate_differences_results(FakeATT())
 
 if __name__ == "__main__":
     unittest.main()
