@@ -569,6 +569,20 @@ def build_panel(
         *covariates]`` plus ``cluster_col`` when available. Feed straight to
         :func:`estimate_att`.
     """
+    # Be idempotent: callers often use ``panel = build_panel(...)`` to inspect the
+    # backend input and then pass that panel to ``fit_att`` for a second fit.  A
+    # built panel stores entity/time in its MultiIndex, not in columns.  Normalize
+    # that representation back to columns before applying the ordinary checks.
+    index_names = set(frame.index.names)
+    if entity not in frame.columns and time not in frame.columns:
+        if {entity, time}.issubset(index_names):
+            frame = frame.reset_index()
+    elif entity not in frame.columns or time not in frame.columns:
+        raise ValueError(
+            f"{entity!r} and {time!r} must either both be columns or both be index "
+            "levels; the frame mixes the two representations."
+        )
+
     if cohort_col not in frame:
         raise ValueError(
             f"{cohort_col!r} missing; call attach_cohort() before build_panel()."
@@ -666,6 +680,47 @@ def build_panel(
             )
 
     return panel.set_index([entity, time]).sort_index()
+
+
+def _validate_differences_results(att) -> None:
+    """Reject a fitted ``differences`` model whose reported ATTs are all nonfinite.
+
+    ``differences`` can complete every scheduled group-time job with
+    ``exception=None`` yet store ``ATT=NaN`` for each job.  Its aggregator then
+    filters those records out and crashes while stacking an empty list, obscuring
+    the actual failure.  Inspect the public-facing result records immediately
+    after fitting so callers see that estimation, rather than panel coverage or
+    clustering, produced no usable post-treatment effects.
+    """
+    result_dict = getattr(att, "_result_dict", None)
+    if not isinstance(result_dict, dict):  # future backend shape; let it proceed
+        return
+
+    records = []
+    for result in result_dict.values():
+        aggregate_inst = result.get("aggregate_inst") if isinstance(result, dict) else None
+        records.extend(getattr(aggregate_inst, "ntl", ()) or ())
+    if not records:
+        return
+
+    post = [
+        item
+        for item in records
+        if getattr(item, "time", -np.inf) >= getattr(item, "cohort", np.inf)
+    ]
+    finite_post = [item for item in post if np.isfinite(getattr(item, "ATT", np.nan))]
+    if post and not finite_post:
+        all_finite = sum(np.isfinite(getattr(item, "ATT", np.nan)) for item in records)
+        raise ValueError(
+            "`differences` completed its group-time jobs but produced no finite "
+            f"post-treatment ATT estimates (0/{len(post)} post-treatment; "
+            f"{all_finite}/{len(records)} finite overall). This happens before "
+            "aggregation and before the site-cluster bootstrap, so changing "
+            "cluster labels cannot fix it. Inspect outcome/covariate variation "
+            "and missing or nonfinite covariates in each cohort-time comparison. "
+            "As a diagnostic, refit with covariates=[]; if that succeeds, add "
+            "covariates back one at a time to find the nuisance-model failure."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -993,6 +1048,38 @@ def aggregate_att(
         except IndexError as exc:
             if "axis 1 with size 0" not in str(exc):
                 raise
+            # This upstream IndexError is unfortunately ambiguous: it can mean
+            # either (a) the requested ATT subset is empty, or (b) only the
+            # clustered multiplier-bootstrap path failed.  Disambiguate by
+            # retrying the same point aggregation without clustering.  Never
+            # return that retry -- doing so would silently report pixel-level SEs
+            # after the caller explicitly requested site clustering.
+            analytic_succeeded = False
+            analytic_error = None
+            if cluster_var:
+                try:
+                    att.aggregate(
+                        alias.get(kind, kind),
+                        cluster_var=None,
+                        boot_iterations=0,
+                        random_state=random_state,
+                    )
+                    analytic_succeeded = True
+                except Exception as retry_exc:  # diagnostic only; preserve below
+                    analytic_error = retry_exc
+            if analytic_succeeded:
+                raise ValueError(
+                    f"`differences` computed the {kind!r} ATT point aggregation, "
+                    f"but its multiplier bootstrap failed while clustering on "
+                    f"{cluster_var!r}. This is not a fire-coverage or cohort-"
+                    "support failure: the identical unclustered aggregation "
+                    "succeeded. The package cannot produce the requested site-"
+                    "clustered standard errors for this design (often because "
+                    "there are too few independent sites within one or more "
+                    "cohorts). Do not fall back silently to pixel SEs; use "
+                    "backend='rpy2' for R did::aggte, and corroborate with "
+                    "att_collapsed() using t(G-1) inference."
+                ) from exc
             raise ValueError(
                 f"`differences` could not compute the {kind!r} ATT aggregation: "
                 "the aggregation backend received no group-time effects in the "
@@ -1008,6 +1095,12 @@ def aggregate_att(
                 "Widen the panel year window, verify the restoration-year column "
                 "used by prepare_panel(), inspect g/year counts on the matched "
                 "panel, or run att_collapsed() as the matched pre/post cross-check."
+                + (
+                    f" The unclustered diagnostic retry also failed with "
+                    f"{type(analytic_error).__name__}: {analytic_error}"
+                    if analytic_error is not None
+                    else ""
+                )
             ) from exc
     if backend == "rpy2":
         from rpy2.robjects.packages import importr
@@ -1079,6 +1172,8 @@ def fit_att(
         cluster=cluster,
         backend=backend,
     )
+    if backend == "differences":
+        _validate_differences_results(att)
     overall = aggregate_att(att, kind="simple", backend=backend)
     event_study = aggregate_att(att, kind="event", backend=backend)
     return att, overall, event_study
