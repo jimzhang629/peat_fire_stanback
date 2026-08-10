@@ -2335,3 +2335,64 @@ def plot_event_study(
     )
     ax.legend(loc="best")
     return fig
+
+def plot_burn_prob_by_site(
+    panel,
+    response="burned",
+    year_col="year",
+    site_col="site_id",
+    cohort_col="g",
+    x="event_time",           # "event_time" or "year"
+    figsize_per_axis=(9, 2.4),
+):
+    """Per-site burn probability over time: treated pixels vs their matched controls.
+
+    One row per restoration site. The dotted red line is that site's restoration
+    year. Read two things: whether the treated and control curves tracked each
+    other BEFORE the line (parallel trends), and whether they separate after it.
+    """
+    df = panel.reset_index() if isinstance(panel.index, pd.MultiIndex) else panel.copy()
+    for col in (response, year_col, site_col, cohort_col):
+        if col not in df.columns:
+            raise ValueError(f"{col!r} not in panel; have {list(df.columns)}")
+
+    # Each site's restoration year comes from its treated pixels; matched controls
+    # in that cluster inherit it, which is what makes the two curves comparable.
+    g_by_site = df.loc[df[cohort_col] > 0].groupby(site_col)[cohort_col].min()
+    df["_g_site"] = df[site_col].map(g_by_site)
+    df["_event_time"] = df[year_col] - df["_g_site"]
+    df["_restored"] = (df[cohort_col] > 0).astype(int)
+
+    xcol = "_event_time" if x == "event_time" else year_col
+    stat = (
+        df.dropna(subset=["_g_site", response])
+        .groupby([site_col, xcol, "_restored"])[response]
+        .agg(["sum", "size", "mean"])
+        .reset_index()
+    )
+
+    sites = sorted(stat[site_col].unique())
+    fig, axs = plt.subplots(
+        len(sites), 1, sharex=True,
+        figsize=(figsize_per_axis[0], figsize_per_axis[1] * len(sites)),
+    )
+    axs = np.atleast_1d(axs)
+
+    for ax, site in zip(axs, sites):
+        block = stat[stat[site_col] == site]
+        for flag, color, label in ((1, "tab:blue", "treated"), (0, "0.55", "control")):
+            s = block[block["_restored"] == flag].sort_values(xcol)
+            if s.empty:
+                continue
+            ax.plot(s[xcol], s["mean"], "-o", ms=3.5, color=color,
+                    label=f"{label} (n={int(s['size'].max())} px)")
+        g = g_by_site.get(site)
+        onset = -0.5 if x == "event_time" else float(g) - 0.5
+        ax.axvline(onset, color="firebrick", lw=1.0, ls=":")
+        ax.set_title(f"{site}   (restored {int(g)})", fontsize=10, loc="left")
+        ax.set_ylabel("P(burn)")
+
+    axs[0].legend(fontsize=8, frameon=False)
+    axs[-1].set_xlabel("years since restoration" if x == "event_time" else "year")
+    fig.tight_layout()
+    return fig
