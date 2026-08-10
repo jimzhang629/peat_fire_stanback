@@ -2336,7 +2336,7 @@ def plot_event_study(
     ax.legend(loc="best")
     return fig
 
-def plot_burn_prob_by_site(
+def plot_burn_rate_by_site(
     panel,
     response="burned",
     year_col="year",
