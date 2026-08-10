@@ -116,8 +116,11 @@ def _treated_mask(
     exactly the rule :func:`matching.balance_table` uses, kept identical so the
     plots and the SMDs describe the same two groups.
     """
-    if restoration_yr_col in pixels.columns and "site_id" not in pixels.columns:
-        return pixels[restoration_yr_col].notna()
+    if restoration_yr_col in pixels.columns:
+        static = pixels.groupby(["x", "y"])[treated_col].nunique().max() == 1 \
+            if {"x", "y"}.issubset(pixels.columns) else True
+        if not static:
+            return pixels[restoration_yr_col].notna()
     return pixels[treated_col] == 1
 
 
