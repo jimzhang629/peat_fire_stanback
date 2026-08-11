@@ -133,13 +133,40 @@ class AttachClusterColumnTests(unittest.TestCase):
 
 
 class AggregateAttDiagnosticsTests(unittest.TestCase):
+    def test_pixel_analytic_aggregation_omits_zero_bootstrap_arguments(self):
+        class FakeATT:
+            peatfire_cluster_var = None
+            peatfire_boot_iterations = 0
+
+            def __init__(self):
+                self.calls = []
+
+            def aggregate(self, kind, **kwargs):
+                self.calls.append((kind, kwargs))
+                if kwargs.get("boot_iterations") == 0:
+                    raise IndexError("index 0 is out of bounds for axis 1 with size 0")
+                return pd.DataFrame({"ATT": [0.1]})
+
+        att = FakeATT()
+
+        result = aggregate_att(att, kind="simple")
+
+        self.assertEqual(result["ATT"].tolist(), [0.1])
+        self.assertEqual(att.calls, [("simple", {})])
+
     def test_distinguishes_cluster_bootstrap_failure_from_empty_att(self):
         class FakeATT:
             peatfire_cluster_var = "site_id"
             peatfire_boot_iterations = 100
             peatfire_random_state = 42
 
-            def aggregate(self, kind, cluster_var, boot_iterations, random_state):
+            def aggregate(
+                self,
+                kind,
+                cluster_var=None,
+                boot_iterations=None,
+                random_state=None,
+            ):
                 if cluster_var:
                     raise IndexError("index 0 is out of bounds for axis 1 with size 0")
                 return pd.DataFrame({"ATT": [0.1]})

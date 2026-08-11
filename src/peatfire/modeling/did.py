@@ -1038,13 +1038,29 @@ def aggregate_att(
                 f"clustering on {cluster_var!r} needs boot_iterations > 0; "
                 "the analytic standard errors have no cluster argument."
             )
-        try:
+
+        def _aggregate(cluster, iterations):
+            """Call ``differences`` without a zero-length bootstrap request.
+
+            In differences 0.3.0, explicitly passing ``boot_iterations=0`` is
+            not equivalent to omitting the bootstrap arguments.  The former can
+            enter the multiplier-bootstrap code with an empty draw matrix and
+            fail with ``axis 1 with size 0`` even though the group-time effects
+            are valid.  Pixel-level analytic inference is the backend default,
+            so omit all bootstrap keywords for that case.
+            """
+            aggregation = alias.get(kind, kind)
+            if cluster is None and not iterations:
+                return att.aggregate(aggregation)
             return att.aggregate(
-                alias.get(kind, kind),
-                cluster_var=cluster_var,
-                boot_iterations=int(boot_iterations),
+                aggregation,
+                cluster_var=cluster,
+                boot_iterations=int(iterations),
                 random_state=random_state,
             )
+
+        try:
+            return _aggregate(cluster_var, boot_iterations)
         except IndexError as exc:
             if "axis 1 with size 0" not in str(exc):
                 raise
@@ -1058,12 +1074,7 @@ def aggregate_att(
             analytic_error = None
             if cluster_var:
                 try:
-                    att.aggregate(
-                        alias.get(kind, kind),
-                        cluster_var=None,
-                        boot_iterations=0,
-                        random_state=random_state,
-                    )
+                    _aggregate(None, 0)
                     analytic_succeeded = True
                 except Exception as retry_exc:  # diagnostic only; preserve below
                     analytic_error = retry_exc
