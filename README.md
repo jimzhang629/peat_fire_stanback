@@ -11,6 +11,11 @@ notebooks/       analysis notebooks; see example.ipynb
 
 ## Documentation
 
+`null_results_and_next_steps.md` covers the null ATT result: why the design could
+not have detected an effect (power analysis), why burned area is the wrong outcome
+for the rewetting mechanism, and five ranked options for where the project goes
+next. The tooling behind it is `peatfire.modeling.power`.
+
 `modeling_notebook_explained.md` is the master guide: a layered walkthrough of
 `notebooks/modeling.ipynb`, the math and statistics behind every step
 (matching, propensity/prognostic scores, the staggered DiD / ATT, odds ratios),
