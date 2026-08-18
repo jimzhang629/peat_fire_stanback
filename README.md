@@ -13,8 +13,10 @@ notebooks/       analysis notebooks; see example.ipynb
 
 `null_results_and_next_steps.md` covers the null ATT result: why the design could
 not have detected an effect (power analysis), why burned area is the wrong outcome
-for the rewetting mechanism, and five ranked options for where the project goes
-next. The tooling behind it is `peatfire.modeling.power`.
+for the rewetting mechanism, and where the project goes next. §3 records the
+recommended pivot — a Monte Carlo bounding analysis for the CPRG carbon
+accounting, which closes out the GHG deliverable without an identifiable treatment
+effect. The tooling behind the power argument is `peatfire.modeling.power`.
 
 `modeling_notebook_explained.md` is the master guide: a layered walkthrough of
 `notebooks/modeling.ipynb`, the math and statistics behind every step
