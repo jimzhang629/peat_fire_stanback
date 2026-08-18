@@ -1076,6 +1076,13 @@ How to know the *design* is good, not just the code correct:
 
 ## Part VIII — Extensions and next steps
 
+- **Design diagnostics first** (`modeling/power.py`): before interpreting any ATT
+  — and especially before interpreting a null — collapse to the site-year panel
+  and read `design_summary`, `randomization_inference`, and
+  `minimum_detectable_effect`. With six sites and a 2019–2024 window the design
+  has ~1–3% power against a treatment that prevents fire outright, so a null is a
+  statement about the design, not about peatlands. See
+  `null_results_and_next_steps.md` for the full argument and the options it opens.
 - **Severity**: swap `product=` for a severity layer; the frame/DiD rerun
   unchanged, the levels model family changes (continuous outcome → OLS/Tweedie).
 - **Mixed logit** (`fit_mixed_logit`, site random intercept) to cross-check the
