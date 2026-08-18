@@ -1,4 +1,4 @@
-# The null ATT: what it means, and five ways forward
+# The null ATT: what it means, and where the project goes next
 
 **Short version.** The finding is *"restored sites do not show significantly less
 burned area than matched controls."* Before treating that as a result about
@@ -156,7 +156,95 @@ Two consequences:
 
 ---
 
-## 3. Five ways forward, ranked by (value to TNC ÷ effort)
+## 3. Recommended pivot: the CPRG bounding analysis
+
+**Decision (2026-08-18): close the project on option E below, paired with option A.
+Do not open a new empirical analysis.**
+
+### Why this one and not the others
+
+The other four options are all *new analyses with uncertain outcomes*. VIIRS
+detection persistence (C1) is the cheapest of them and might work — but if it also
+returns null, three more weeks have bought nothing and the project is in exactly
+the same place. The drainage gradient (B) has real power but is observational,
+invites the confounding objections the matched design was built to avoid, and
+would open more questions than it closes. Neither *wraps up*.
+
+A bounding analysis cannot return null. It produces a number and an uncertainty
+range by construction, which makes it the only option with a guaranteed landing
+point — the property that matters when the goal is to finish.
+
+It is also close to free on data: no new downloads, no new geospatial processing,
+no pipeline changes. Every parameter is already in hand (table below).
+
+**The key reframing: the null is an input to this analysis, not an obstacle to
+it.** Restoration effectiveness enters as a parameter with a wide prior, and §1's
+power result is what justifies the width. The analysis then asks whether that
+width actually matters — which is a question the failed ATT can answer even though
+it could not estimate the parameter itself.
+
+### Parameters, and where each comes from
+
+| Parameter | Range | Source |
+|---|---|---|
+| Fire return interval | 20–86 yr (most 30–60) | Poulter et al. 2006, via the CPRG memo |
+| Burn depth, drained | 0.1–0.4 m | Reardon et al. 2007 (12.5–24 cm at WTD 66 cm); Mickler et al. 2017 (~40 cm, severe) |
+| Burn depth, restored | 0–0.02 m | Richardson et al. 2022 (no loss at WTD 8 cm; 1–2 cm at WTD 30 cm) |
+| Peat vs. aboveground C contribution | 30% at 0.01 m → 81% at 0.1 m | Poulter Table 5, via the CPRG memo |
+| Emissions per fire event | 163 vs. 446 Mg CO2e/ac | the 2.7x discrepancy the CPRG memo already flags between Poulter's reported high-end and the Richardson supplement |
+| Peat stock (bulk density 0.15 g/cm³, 52% C, 2.3 m depth) | 3,450 Mg peat/ha = 6,566 Mg CO2/ha | Richardson et al. 2022, PD site probes |
+| **Restoration effectiveness** | **unconstrained by this study** | ← §1: the design had 0.2–3% power, so the data do not narrow this |
+
+### Method
+
+1. Monte Carlo over the seven parameters above → distribution of the **wildfire
+   term** in Mg CO2e/ac/yr, and of the cumulative 2050 total.
+2. Variance decomposition (Sobol, or one-at-a-time if that is enough) → which
+   parameter dominates the spread.
+3. Re-run with a shortened return-interval distribution → the phase-3 climate
+   scenario, as a parameter change rather than a new model.
+
+### The falsifiable expectation
+
+**Burn depth and fire return interval will dominate the variance; restoration
+effectiveness — the parameter this project spent its effort trying to estimate —
+will contribute least.** Stated up front so it can be checked rather than
+rationalized afterwards. If it holds, the conclusion is that the unestimable ATT
+was never the parameter that mattered, and the cost of the null to TNC is much
+smaller than it currently appears. If it does *not* hold, that is itself the
+finding, and it argues for funding option F's monitoring design.
+
+### Expected recommendation
+
+The CPRG memo already contains the decision rule — *"If the fire return interval
+exceeds 25 years, contributions from wildfire emission reductions should be
+treated as a durability benefit rather than included directly in carbon
+accounting"* — and Poulter's 20–86 yr (most 30–60) nearly settles it. The Monte
+Carlo's job is to quantify how much of the interval distribution falls below 25
+years under current and future climate, and to **size a buffer pool**, rather than
+to credit 22.6 Mg CO2e/ac/yr as an annual flux.
+
+### What it closes
+
+- **Roadmap 3c** ("final model … and associated GHG reduction estimates") —
+  currently blocked on the ATT; this unblocks it without one.
+- **Roadmap 3b** ("document limitations") — §1 above plus `modeling/power.py`.
+- **Roadmap phase 4** (future fire risk) — reduces to step 3 of the method.
+
+Estimated effort: ~1 week, most of it writing. Deliverable: one memo with the
+revised Mg CO2e/ac/yr distribution, a tornado plot of the variance decomposition,
+and the buffer-pool recommendation.
+
+### Status
+
+Not yet built. Planned home: `src/peatfire/modeling/carbon.py` (Monte Carlo +
+variance decomposition) and a memo alongside this one. The priors in the table
+above are my reading of the sources and should be adjusted where the project
+disagrees before anything is quoted externally.
+
+---
+
+## 4. Five ways forward, ranked by (value to TNC ÷ effort)
 
 ### A. Report the null as a bounded claim — 1 week, do this regardless
 
@@ -224,6 +312,9 @@ link 1.
 
 ### E. Value-of-information / bounding analysis for the CPRG decision — cheapest thing with direct client impact
 
+> **This is the recommended path — see §3 for the decision, the parameter table,
+> and what it closes.** The rest of this entry is the original sketch.
+
 TNC's actual decision, stated in the CPRG memo, is: *do avoided-fire emissions go
 into carbon accounting, or into durability?* The memo's own rule — "if the fire
 return interval exceeds 25 years, treat as a durability benefit" — plus Poulter's
@@ -253,7 +344,7 @@ there is confounding).
 
 ---
 
-## 4. What I would not do
+## 5. What I would not do
 
 - **Do not add more covariates to rescue the ATT.** The problem is 18 site-years
   and a mismatched outcome, not omitted variables. More covariates worsen the
@@ -266,7 +357,7 @@ there is confounding).
 
 ---
 
-## 5. Running the new code
+## 6. Running the new code
 
 ```python
 from peatfire.modeling import (
