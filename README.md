@@ -18,6 +18,12 @@ the design-decision log, and the fire-product comparison & validation toolkit
 decisions (Appendix A). It replaces the former `modeling_roadmap.md`,
 `decisions.md`, `score_matching_and_did.md`, and `matching_assignment.md`.
 
+`null_results_next_steps.md` is the decision memo for interpreting a null
+burned-area treatment estimate. It lays out the diagnostic checks, a hierarchy of
+fire estimands, an expected-loss carbon model, revised grant scenarios, and
+decision gates for shifting the fire contribution from credited mitigation to a
+durability or sensitivity benefit when it is not identifiable.
+
 ## Setup
 
 Install the project once as an editable package. This puts `peatfire` on the
