@@ -11,25 +11,15 @@ notebooks/       analysis notebooks; see example.ipynb
 
 ## Documentation
 
-`null_results_and_next_steps.md` covers the null ATT result: why the design could
-not have detected an effect (power analysis), why burned area is the wrong outcome
-for the rewetting mechanism, and where the project goes next. §3 records the
-recommended pivot — a Monte Carlo bounding analysis for the CPRG carbon
-accounting, which closes out the GHG deliverable without an identifiable treatment
-effect. The tooling behind the power argument is `peatfire.modeling.power`.
+`methods.md` is the reportable write-up of the modeling approach: the estimand,
+the study frame and treatment definition, the fire products and covariates, the
+matched staggered difference-in-differences and matched-logistic specifications,
+the clustering and power/design diagnostics, and the design-decision log with
+assumptions and limitations. It is the document to hand to a collaborator who
+needs to know what was done and why, without reading the notebook.
 
-`modeling_notebook_explained.md` is the master guide: a layered walkthrough of
-`notebooks/modeling.ipynb`, the math and statistics behind every step
-(matching, propensity/prognostic scores, the staggered DiD / ATT, odds ratios),
-the design-decision log, and the fire-product comparison & validation toolkit
-decisions (Appendix A). It replaces the former `modeling_roadmap.md`,
-`decisions.md`, `score_matching_and_did.md`, and `matching_assignment.md`.
-
-`null_results_next_steps.md` is the decision memo for interpreting a null
-burned-area treatment estimate. It lays out the diagnostic checks, a hierarchy of
-fire estimands, an expected-loss carbon model, revised grant scenarios, and
-decision gates for shifting the fire contribution from credited mitigation to a
-durability or sensitivity benefit when it is not identifiable.
+`notebooks/modeling.ipynb` is the executable version of the same pipeline; the
+design diagnostics behind the power argument live in `peatfire.modeling.power`.
 
 ## Setup
 
