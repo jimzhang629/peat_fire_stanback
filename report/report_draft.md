@@ -411,26 +411,15 @@ dominate the southeastern fire regime. From this comparison, the most suitable
 datasets for assessing fire occurrence, burned area, and burn severity were
 determined to be VIIRS Active Fire, GABAM, and SE FireMap, respectively.
 
-[[FIG 2: Annual burned area over NC peat for the four burned-area products
-compared (MCD64A1, FireCCI51, FireCCIS311, GABAM), on the common grid. Your own
-note: "maybe do the burned area over nc peat for the four products that I
-compared." This is the figure that makes the product comparison concrete —
-worth the effort if you have the plotting code already.]] [[CUT? if time is
-short, the recall figures below carry the argument on their own.]]
-
-*Figure 2. Annual burned area within the North Carolina peatland mask, by
-burned-area product, 2001–2024. [[TODO: one sentence on what the divergence
-between products shows.]]*
-
 However, upon inspecting the burn severity data overlaid over North Carolina
-(Figure 3), it was determined that the burn severity products were too sparse
+(Figure 2), it was determined that the burn severity products were too sparse
 over North Carolina peatlands and none of these products were used in further
 analyses.
 
-[[FIG 3: Burn severity products overlaid over NC. Panels a, MTBS; b, SE FireMap;
+[[FIG 2: Burn severity products overlaid over NC. Panels a, MTBS; b, SE FireMap;
 c, MOSEV. Already in your draft.]]
 
-*Figure 3. Burn severity products overlaid over North Carolina. **a**, MTBS.
+*Figure 2. Burn severity products overlaid over North Carolina. **a**, MTBS.
 **b**, SE FireMap. **c**, MOSEV. [[TODO: add a clause quantifying the sparsity —
 e.g. "n peat pixels have any severity value across the record," or "only the
 2008 and 2011 fires appear."]] Because no product provided usable severity over
@@ -440,16 +429,16 @@ peat, burn severity was dropped as an outcome.*
 
 The accuracy of the fire occurrence and burned area products was then obtained
 through comparison with ground truth reference datasets over North Carolina
-peatlands (Figure 4; see Methods §2.3).
+peatlands (Figure 3; see Methods §2.3).
 
-[[FIG 4: Recall of each burned-area product against each reference dataset,
+[[FIG 3: Recall of each burned-area product against each reference dataset,
 within NC peat. Panels: **a**, NIFC_IFPH; **b**, GEOMAC; **c**, TNC Coastal
 Plain; **d**, TNC Sandhills. Your comment 13 specifies this panel order. Note
 that TNC Sandhills has no overlap with the ≥80% histosol mask, so panel d is
 NC-wide only — or drop panel d from the peat figure and keep it in an NC-wide
 version.]]
 
-*Figure 4. Burned-area product recall against fire-perimeter reference datasets
+*Figure 3. Burned-area product recall against fire-perimeter reference datasets
 within North Carolina peatlands. **a**, NIFC_IFPH (fires ≥ 100 acres). **b**,
 GEOMAC (fires ≥ 100 acres). **c**, TNC Coastal Plain. **d**, TNC Sandhills.
 Bars show pooled recall (cell-weighted across all events, dominated by large
@@ -494,12 +483,12 @@ rather than a variable.
 
 **Matching and balance.**
 
-[[FIG 5: Matching results. Suggested panels: **a**, treated and matched control
+[[FIG 4: Matching results. Suggested panels: **a**, treated and matched control
 pixels in geographic space; **b**, treated vs control in covariate space (2D
 projection); **c**, love plot of standardized mean difference per covariate,
 before vs after matching. Slides 17, 65, 66 have versions of all three.]]
 
-*Figure 5. Covariate matching of treated (restored) and control peat pixels.
+*Figure 4. Covariate matching of treated (restored) and control peat pixels.
 **a**, Locations of treated and matched control pixels. **b**, Treated and
 control pixels in covariate space [[TODO: name the two covariates shown]].
 **c**, Standardized mean difference per covariate before and after matching;
@@ -513,13 +502,13 @@ imbalanced]].
 
 **Difference-in-differences.**
 
-[[FIG 6: DiD results. Panels: **a**, event study — ATT by event time, with
+[[FIG 5: DiD results. Panels: **a**, event study — ATT by event time, with
 confidence bands and the treatment year marked; **b**, aggregated ATT. Slide 43
 has a version, but note your own caveat there that the error bars were broken by
 NaN bootstrap replicates — regenerate with `randomization_inference` before
 using.]]
 
-*Figure 6. Staggered difference-in-differences estimate of the effect of
+*Figure 5. Staggered difference-in-differences estimate of the effect of
 peatland restoration on annual burn probability, MODIS MCD64A1, 2001–2024.
 **a**, Event study: ATT by year relative to each site's restoration year.
 Estimates at negative event times test the parallel-trends assumption and should
@@ -549,11 +538,11 @@ than in the discussion because each is a property of the estimate itself:
 
 **Matched logistic regression.**
 
-[[FIG 7: Odds ratios with 95% CIs from the matched logistic model, covariates
+[[FIG 6: Odds ratios with 95% CIs from the matched logistic model, covariates
 sorted by effect size, with `treated` highlighted and a reference line at OR = 1.
 Run this for both the full and the PDSI+GDD-only covariate sets — see below.]]
 
-*Figure 7. Odds ratios and 95% confidence intervals from the matched logistic
+*Figure 6. Odds ratios and 95% confidence intervals from the matched logistic
 regression of annual pixel burn status on restoration status and covariates,
 with standard errors clustered by restoration site. Continuous covariates are
 standardized, so each odds ratio is the multiplicative change in fire odds per
@@ -578,13 +567,13 @@ specifications: the full covariate set, and the reduced set retaining PDSI and
 growing degree days as the only climate variables. Standard errors clustered by
 restoration site; continuous covariates standardized.*
 
-[[FIG 8: Burn rate vs covariate value, per covariate, with pixels binned into 8
+[[FIG 7: Burn rate vs covariate value, per covariate, with pixels binned into 8
 equal-count bins. You already have these for PDSI, Tmin, Tmax, and precipitation
 (slides 21–34) for both FireCCIS311 at 300 m and MCD64A1 at 300 m and 500 m.
 Pick one product and one resolution for the report and put the rest in an
 appendix or leave them in the deck.]]
 
-*Figure 8. Annual burn rate against each per-year covariate, MODIS MCD64A1 at
+*Figure 7. Annual burn rate against each per-year covariate, MODIS MCD64A1 at
 300 m. Pixels are divided into eight bins of equal count across each covariate's
 value range. [[TODO: one sentence per panel, or one sentence for the figure —
 which covariates show a monotone relationship with burn rate and which are
@@ -916,7 +905,7 @@ an effect, since at this cluster count one fire in one year drives it.
 ## Appendix A — Supplementary figures
 
 [[CUT? Only if the main text is already long enough. Candidates: burn rate vs
-covariate panels for the products/resolutions not shown in Figure 8
+covariate panels for the products/resolutions not shown in Figure 7
 (FireCCIS311 at 300 m; MCD64A1 at 500 m — slides 20–34); per-site burn rate
 plots (slides 35–40); propensity and prognostic score maps and overlap
 diagnostics (slides 4–7, 52–54); the NC-wide (non-peat) validation results

@@ -21,11 +21,11 @@ thinking. Do §A1 first — it is 20 minutes and it makes the rest feel finite.
       Exec summary → Intro → Methods → Results → Discussion → Next steps.
       Cat's four asks map to: Exec summary (all four), §4.4 Decisions (#2),
       §3.4 What predicts fire (#3), §5 Next steps (#4).
-- [ ] Decide the figure budget. The draft has 8 main figures and 8 tables, which
-      is too many for a short report. My cut list, in order:
-      Fig 2 (burned area by product) → Tab 3 (recall table, redundant with Fig 4)
-      → Fig 8 (burn rate vs covariates, or move to appendix) → Tab 5/6 (merge the
-      two power tables into one) → Tab 2a/2b/2c (merge into one Table 2).
+- [ ] Decide the figure budget. The draft has 7 main figures and 8 tables, which
+      is still more than a short report wants. Remaining cut list, in order:
+      Tab 3 (recall table, redundant with Fig 3) → Fig 7 (burn rate vs
+      covariates, or move to appendix) → Tab 5/6 (merge the two power tables into
+      one) → Tab 2a/2b/2c (merge into one Table 2).
       A tight version is **5 figures, 4 tables**.
 - [ ] Decide whether §4.3 (CPRG implications) is in scope for *this* report or
       belongs in a separate memo. If separate, §4.3 becomes two sentences and a
@@ -44,7 +44,7 @@ run both and report both.
 - [ ] Run it on the **reduced** set: drop `tmax_normal`, `tmin_normal`,
       `precip_normal`; keep PDSI + GDD.
 - [ ] Same two specs for the DiD, if it is cheap to do.
-- [ ] Fill **Table 4** (side-by-side odds ratios) and **Figure 7**.
+- [ ] Fill **Table 4** (side-by-side odds ratios) and **Figure 6**.
 - [ ] Note anything that flips sign or magnitude between specs — that is a
       finding, and it is the direct answer to Cat's question.
 - [ ] If you cannot get to this: Cat's fallback ask was *"could you provide your
@@ -74,7 +74,7 @@ The ones that carry real weight:
 - [ ] Randomization-inference p-value from `randomization_inference()`.
 - [ ] `treated` odds ratio + CI from the matched logistic.
 - [ ] Number of treated pixels dropped for having no control inside the caliper.
-- [ ] Recall numbers for FireCCIS311 vs MCD64A1 in peat (Fig 4 / §3.2).
+- [ ] Recall numbers for FireCCIS311 vs MCD64A1 in peat (Fig 3 / §3.2).
 - [ ] Sites usable per product (`design_summary`) → Table 1 and §3.5.
 - [ ] Power table — **re-run with `design_from_panel(sy)` first.** The numbers in
       `null_results_and_next_steps.md` §1a use illustrative fire probabilities,
@@ -85,13 +85,13 @@ The ones that carry real weight:
 See `figure_table_manifest.md` for the source of each. In priority order:
 
 - [ ] Fig 1 — peat extent map (you have it; it is already in the draft)
-- [ ] Fig 3 — severity products over NC (you have it)
-- [ ] Fig 4 — recall vs reference datasets, panels a–d (comment 13's panel
+- [ ] Fig 2 — severity products over NC (you have it)
+- [ ] Fig 3 — recall vs reference datasets, panels a–d (comment 13's panel
       order: a NIFC_IFPH, b GEOMAC, c TNC Coastal Plain, d TNC Sandhills)
-- [ ] Fig 5 — matching + love plot (slides 17, 65, 66)
-- [ ] Fig 6 — event study + aggregated ATT (**regenerate — slide 43's error bars
+- [ ] Fig 4 — matching + love plot (slides 17, 65, 66)
+- [ ] Fig 5 — event study + aggregated ATT (**regenerate — slide 43's error bars
       are broken by the NaN bootstrap**)
-- [ ] Fig 7 — odds ratio forest plot (needs A2)
+- [ ] Fig 6 — odds ratio forest plot (needs A2)
 
 ### A6. Write the four `[[TODO]]` prose blocks (3–4 hrs)
 
@@ -119,11 +119,11 @@ Cross-reference so you can delete them as you go:
 | 6 | "products chosen based on resolution, coverage, small fires…" | §3.1 opening paragraph, drafted |
 | 7 | check why and add it in | §3.1 — [ ] verify the selection criteria against `fire_product_comparison.xlsx` |
 | 8 | pooled/mean-event recall + detection rate → methods | §2.3, drafted with definitions |
-| 9 | GEOMAC, TNC Coastal Plain, NIFC_IFPH; Sandhills has no peat | Table 2b caption + Fig 4 caption |
-| 10 | figure caption should explain how to interpret | Fig 4 caption, drafted |
+| 9 | GEOMAC, TNC Coastal Plain, NIFC_IFPH; Sandhills has no peat | Table 2b caption + Fig 3 caption |
+| 10 | figure caption should explain how to interpret | Fig 3 caption, drafted |
 | 11 | say FireCCIS311 had best accuracy | §3.2, drafted (needs the numbers) |
 | 12 | add a methods section for the product comparison | §2.3, drafted |
-| 13 | recall tables, panel order a–d, note the <100 acre exclusion | Fig 4 + Tab 3 + §2.3 |
+| 13 | recall tables, panel order a–d, note the <100 acre exclusion | Fig 3 + Tab 3 + §2.3 |
 | 14 | explain recall and precision in methods | §2.3, drafted incl. why precision is conditional |
 | 15 | best combo of small and large fire detection | §3.2, drafted |
 | 16, 17 | reword to match final section names | done — sections are now named |
@@ -146,9 +146,7 @@ Cross-reference so you can delete them as you go:
 - [ ] **Check the Ashenfelter-dip question.** Were any of the six sites restored
       as post-fire rehabilitation? If yes, it explains the parallel-trends
       violation and belongs in §4.5. Check the TNC restoration records.
-- [ ] **Fig 2** (annual burned area over NC peat, four products). Nice to have;
-      cut first if time is short.
-- [ ] **Fig 8** (burn rate vs covariate, 8 equal-count bins). You have these
+- [ ] **Fig 7** (burn rate vs covariate, 8 equal-count bins). You have these
       already for three product/resolution combinations — pick one for the main
       text, appendix the rest.
 - [ ] References: fill the `[[TODO: full citation]]` entries.
