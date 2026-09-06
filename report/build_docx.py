@@ -1,11 +1,11 @@
-"""Render report/report_draft.md into a Word document.
+"""Render a report markdown file into a Word document.
 
-Turns the markdown scaffold into project_report_scaffold.docx so drafting can
-continue in Word. Placeholders ([[NUM: ...]], [[TODO: ...]], [[FIG n: ...]]) are
+Defaults to project_report.md; pass another filename in report/ to render that
+instead (e.g. report_draft.md). Placeholders ([[NUM: ...]], [[TODO: ...]], [[FIG n: ...]]) are
 highlighted yellow, and the "> " guidance blocks are set in grey italic so they
 read as scaffolding rather than as report prose.
 
-    python report/build_docx.py
+    python report/build_docx.py [report_draft.md]
 
 Re-run it after editing the markdown; it overwrites the .docx.
 """
@@ -13,6 +13,7 @@ Re-run it after editing the markdown; it overwrites the .docx.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from docx import Document
@@ -21,8 +22,8 @@ from docx.enum.text import WD_COLOR_INDEX
 from docx.shared import Pt, RGBColor
 
 HERE = Path(__file__).resolve().parent
-SRC = HERE / "report_draft.md"
-DST = HERE / "project_report_scaffold.docx"
+SRC = HERE / sys.argv[1] if len(sys.argv) > 1 else HERE / "project_report.md"
+DST = SRC.with_suffix(".docx")
 
 GREY = RGBColor(0x66, 0x66, 0x66)
 
