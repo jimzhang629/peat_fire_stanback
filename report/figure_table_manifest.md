@@ -7,6 +7,12 @@ figures already exist there and only need exporting.
 Status key: **have** = exists, just place it · **regen** = exists but must be
 re-run · **new** = does not exist yet.
 
+> **Which document this covers.** This manifest was written for the long scaffold
+> (`report_draft.md`). The finished short report (`project_report.md`) uses only
+> figures 1–5 below, and its five figure slots are listed with their actual saved
+> filenames in `REPORT_TODO.md` §1 — use that list when placing figures. Figures
+> 6–7 and tables 4–8 here belong to the longer draft only.
+
 ## Figures
 
 | # | Content | Status | Source |
