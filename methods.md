@@ -365,7 +365,10 @@ parallel trends):
 
    on the matched pixel-year frame, with continuous predictors centred and
    scaled, and report $e^{\beta}$ with 95 % CIs. $\mathrm{OR}_T < 1$ with a CI
-   below 1 means restoration lowers the odds of burning.
+   below 1 means restoration lowers the odds of burning. $X$ is the same static
+   continuous covariate set the match uses, after the §5.4 exclusions, less
+   `histosol_pct`: on the ≥ 80 % frame that layer is near-constant, so it
+   contributes a near-collinear column without adding information.
 3. **Drought interaction.** Refit as
    `burned ~ treated * pdsi + covariates`, so the treatment log-odds effect
    becomes $\beta_T + \beta_{T\times \text{pdsi}}\cdot \text{pdsi}$ — a treatment
