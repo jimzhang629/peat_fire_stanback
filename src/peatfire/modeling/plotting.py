@@ -137,6 +137,46 @@ def _unique_pixels(pixels: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
     return pixels
 
 
+def _set_year_ticks(
+    ax: plt.Axes,
+    years: Sequence,
+    positions: Optional[Sequence] = None,
+    *,
+    max_ticks: int = 30,
+    rotation: float = 45.0,
+    fontsize: int = 8,
+) -> None:
+    """Label a year (or event-time) axis with one tick per period, without overlap.
+
+    A tick per year is the readable choice on the short panels (a Landsat-era
+    window is a handful of years), but the long records -- MCD64A1 runs 2001
+    onwards, i.e. 20+ years -- pack enough labels to collide at the default
+    horizontal, full-size ticks. So the labels are drawn rotated 45 degrees and one
+    step smaller, which is enough for a couple of decades on a standard 8-inch
+    figure, and beyond ``max_ticks`` periods every *n*-th year is labelled (the
+    line itself still shows every year; only the labels thin out).
+
+    ``positions`` is for axes whose x-coordinate is not the year itself -- the
+    categorical heat map, where year *i* sits at x = ``i`` -- and defaults to
+    plotting the years at their own values.
+    """
+    yrs = np.asarray(list(years))
+    if yrs.size == 0:
+        return
+    order = np.argsort(yrs)
+    yrs = yrs[order]
+    pos = np.asarray(list(positions))[order] if positions is not None else yrs
+    step = max(int(np.ceil(yrs.size / max_ticks)), 1) if max_ticks else 1
+    ax.set_xticks(pos[::step])
+    ax.set_xticklabels(
+        [str(int(y)) for y in yrs[::step]],
+        rotation=rotation,
+        ha="right" if rotation else "center",
+        rotation_mode="anchor" if rotation else None,
+        fontsize=fontsize,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. Covariate coverage maps
 # ---------------------------------------------------------------------------
@@ -977,7 +1017,7 @@ def plot_prognostic_trajectory(
         ax.plot(years, obs.values, "--", color="0.4", lw=1.2,
                 label="observed control burn rate", zorder=2)
 
-    ax.set_xticks(years)
+    _set_year_ticks(ax, years)
     ax.set_xlabel("year")
     ax.set_ylabel("prognostic fire risk  E[burn | X, untreated]")
     ax.legend(loc="best")
@@ -1090,7 +1130,7 @@ def plot_raw_burn_rate_by_year(
             se = _binomial_se(mean, stat["count"].to_numpy())
             ax.fill_between(years, mean - se, mean + se, color=color, alpha=0.15, zorder=1)
 
-    ax.set_xticks(sorted(df[year_col].unique()))
+    _set_year_ticks(ax, sorted(df[year_col].unique()))
     ax.set_xlabel("calendar year")
     ax.set_ylabel(f"raw burn rate  mean({response})")
     ax.set_title(
@@ -1188,7 +1228,7 @@ def plot_raw_burn_rate_by_event_time(
                        label=f"control pooled mean (n={len(ref):,} pixel-years)")
 
     if not aligned.empty:
-        ax.set_xticks(sorted(aligned["event_time"].unique()))
+        _set_year_ticks(ax, sorted(aligned["event_time"].unique()))
     ax.set_xlabel("event time (years since restoration)")
     ax.set_ylabel(f"raw burn rate  mean({response})")
     ax.set_title(
@@ -1777,8 +1817,7 @@ def plot_burned_area_covariate_heatmap(
                 ax.text(j, yc, format(grid[i, j], num_fmt), ha="center", va="center",
                         fontsize=8, color="0.1" if lum > 0.55 else "0.95")
 
-    ax.set_xticks(range(len(years)))
-    ax.set_xticklabels([str(int(y)) for y in years])
+    _set_year_ticks(ax, years, positions=range(len(years)))
     if is_cat:
         ax.set_yticks(range(len(row_order)))
         ax.set_yticklabels([str(b) for b in row_order])
@@ -1990,7 +2029,7 @@ def plot_burned_area_and_covariate_by_year(
            label="burned area", zorder=2)
     ax.set_xlabel("calendar year")
     ax.set_ylabel("burned area (ha)")
-    ax.set_xticks(years)
+    _set_year_ticks(ax, years)
     ax.set_ylim(bottom=0)
 
     ax2 = ax.twinx()
@@ -2329,7 +2368,7 @@ def plot_event_study(
         xytext=(3, -10), textcoords="offset points", va="top", ha="left",
         fontsize=9, color="0.4",
     )
-    ax.set_xticks(sorted(tidy["event_time"].unique()))
+    _set_year_ticks(ax, sorted(tidy["event_time"].unique()))
     ax.set_xlabel("event time (years since restoration)")
     ax.set_ylabel(ylabel)
     ax.set_title(
