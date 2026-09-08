@@ -67,18 +67,7 @@ from .did import (  # staggered DiD alternative (Castro et al. 2026)
     restrict_panel_to_matched,
     restrict_to_supported_cohorts,
 )
-from .power import (  # design diagnostics: what effect could we ever have seen?
-    DesignSpec,
-    design_from_panel,
-    design_summary,
-    did_site_year,
-    minimum_detectable_effect,
-    power_curve,
-    randomization_inference,
-    sample_size_curve,
-    simulate_power,
-    site_year_panel,
-)
+
 from .climate import (  # GHCN station points -> gridded climate covariates
     build_annual_climate,
     build_climate_normals,
