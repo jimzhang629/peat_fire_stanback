@@ -1460,19 +1460,69 @@ def check_matches(
     )
 
 
-def check_balance(before: pd.DataFrame, after: pd.DataFrame, threshold: float = 0.1) -> None:
-    """Verify Stage 6: |SMD| shrank and clears the balance threshold post-match."""
+def check_balance(
+    before: pd.DataFrame,
+    after: pd.DataFrame,
+    threshold: float = 0.1,
+    worsen_tol: float = 0.01,
+) -> None:
+    """Verify Stage 6: every covariate clears the |SMD| threshold post-match.
+
+    The bar is the standard one -- **post-match ``|SMD| <= threshold``** (0.1 by
+    convention) for every covariate. It is deliberately *not* "|SMD| shrank for
+    every covariate": a covariate that was already balanced before matching can
+    drift up by a hair and mean nothing, so demanding monotone improvement fails
+    on numerical noise while saying nothing about confounding.
+
+    Three outcomes:
+
+    * **Error -- NaN.** :func:`standardized_mean_diff` returns ``nan`` when a
+      group is empty or has zero spread (e.g. exact-matching on a categorical
+      makes a soil covariate constant within every stratum). That is a
+      *measurement* failure, not an imbalance, so it is reported as such rather
+      than misread as a regression.
+    * **Error -- residual imbalance.** Any covariate above ``threshold`` after
+      matching: the design has not removed the confounding it needs to.
+    * **Warn -- worsened but still balanced.** A covariate whose ``|SMD|`` grew
+      by more than ``worsen_tol`` yet stayed under ``threshold``. Worth a look on
+      the love plot, not worth blocking on. Growth below ``worsen_tol`` (1% of a
+      pooled SD by default) is noise and is passed over silently.
+    """
     _require_cols(before, ["smd"], "before-balance")
     _require_cols(after, ["smd"], "after-balance")
     b = before["smd"].abs()
     a = after["smd"].abs()
-    improved = (a <= b + 1e-9).all()
-    assert improved, "matching did not reduce |SMD| for every covariate."
-    worst = a.max()
-    if worst > threshold:
+
+    # NaN first: it fails every inequality below, so left unhandled it would
+    # surface as a bogus "imbalance" with no hint of the real cause.
+    nan_after = list(a.index[a.isna()])
+    assert not nan_after, (
+        f"post-match |SMD| is NaN for {nan_after} -- one group is empty or the "
+        f"covariate has zero spread after matching (constant within every "
+        f"stratum), so the SMD is undefined. This is not imbalance: drop the "
+        f"covariate from the balance table or loosen the exact-match keys."
+    )
+
+    over = a[a > threshold]
+    assert over.empty, (
+        f"post-match |SMD| exceeds {threshold} for "
+        f"{ {k: round(v, 3) for k, v in over.items()} } -- residual imbalance; "
+        f"consider a tighter caliper, matching with replacement, or adding these "
+        f"covariates to the match axes."
+    )
+
+    # Aligned on the covariate index, so a before/after row mismatch shows up as
+    # NaN in the difference rather than a silently wrong comparison.
+    worse = (a - b.reindex(a.index)).dropna()
+    worse = worse[worse > worsen_tol]
+    if not worse.empty:
+        detail = ", ".join(
+            f"{name} {b[name]:.3f} -> {a[name]:.3f}" for name in worse.index
+        )
         warnings.warn(
-            f"post-match |SMD| max is {worst:.3f} > {threshold} -- residual "
-            f"imbalance; consider a tighter caliper or more covariates.",
+            f"|SMD| grew for {detail} -- still under {threshold}, so not "
+            f"blocking, but check these on the love plot.",
             stacklevel=2,
         )
-    print(f"[Stage 6 OK] balance improved; post-match max |SMD| = {worst:.3f}.")
+
+    print(f"[Stage 6 OK] post-match max |SMD| = {a.max():.3f} <= {threshold}.")
