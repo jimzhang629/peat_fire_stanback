@@ -57,7 +57,11 @@ So :func:`estimate_att`, :func:`fit_att` and :func:`att_collapsed` all take
 * ``"site"`` (**default**) -- SEs clustered on ``cluster_col`` (``site_id``, the
   key :func:`peatfire.modeling.match_controls` stamps on each treated pixel *and*
   on the controls matched to it). The effective sample size is the number of
-  sites.
+  sites. This only bites on the **matched** panel: an unmatched control belongs to
+  no site, so :func:`prepare_panel` can only give it a singleton cluster and the
+  bootstrap treats it as an independent draw. Site-clustering an unmatched panel
+  therefore returns near pixel-level SEs; :func:`estimate_att` warns when that
+  happens.
 * ``"pixel"`` -- the old behaviour: each pixel (panel entity) is its own cluster.
   Keep it only to *quantify* the deflation, not to report.
 
@@ -100,6 +104,13 @@ NEVER_TREATED = 0
 # restoration sites the site-clustered SE is still far closer to honest than the
 # pixel-level one, the user just needs to know it is optimistic.
 FEW_CLUSTERS = 30
+
+# A "cluster" holding one pixel contributes no within-cluster correlation, and the
+# multiplier bootstrap draws it its own weight -- i.e. it is pixel-level inference
+# for that pixel. On the *unmatched* panel every control is a singleton (it belongs
+# to no restoration site), so cluster_by="site" can be site-clustered in name while
+# the variance is pixel-level in fact. Warn once this share of pixels is affected.
+SINGLETON_SHARE_WARN = 0.10
 
 CLUSTER_LEVELS = ("site", "pixel")
 
@@ -416,11 +427,18 @@ def prepare_panel(
     -----
     Pixels with no site -- the unmatched control pool -- have no restoration site
     to cluster with, so each is given its **own singleton cluster**
-    (``"_pixel_<entity>"``). A singleton contributes no within-cluster correlation,
-    which is the conservative reading of "we know nothing tying these controls
-    together"; a warning reports how many were assigned this way. On the *matched*
-    panel every control inherits its treated partner's ``site_id`` and none of this
-    applies.
+    (``"_pixel_<entity>"``); a warning reports how many were assigned this way.
+
+    Read that warning as a limit on the inference, not a technicality. A singleton
+    contributes no within-cluster correlation and the multiplier bootstrap draws it
+    its own weight, so a panel whose controls are all singletons is **pixel-level
+    inference under a site-level name** -- exactly the deflation ``cluster_by="site"``
+    exists to avoid, and it does not announce itself in the cluster *count* (20k
+    singletons look like 20k clusters). :func:`estimate_att` therefore warns again
+    at fit time when singletons dominate. The fix is to give controls a real
+    cluster: run the DiD on the *matched* panel, where
+    :func:`restrict_panel_to_matched` makes every control inherit its treated
+    partner's ``site_id`` and none of this applies.
     """
     out = frame.copy()
     out[entity] = out.groupby([x, y]).ngroup()
@@ -759,6 +777,36 @@ def _resolve_cluster(
         return None  # clustering on the entity *is* pixel clustering
 
     n_clusters = panel[cluster_col].nunique()
+
+    # How many of those "clusters" are one pixel on their own? On the unmatched
+    # panel this is nearly all of them, and a bootstrap over ~20k singletons is
+    # pixel-level inference wearing a site-level label -- the exact deflation
+    # cluster_by="site" exists to avoid, so it must not pass silently. The
+    # FEW_CLUSTERS check below cannot catch it: the singletons make the cluster
+    # count large, which is what a healthy design looks like from the outside.
+    if warn_few:
+        pixels_per_cluster = (
+            panel.reset_index().groupby(cluster_col)[entity].nunique()
+        )
+        singletons = pixels_per_cluster.eq(1)
+        n_pixels = int(pixels_per_cluster.sum())
+        share = int(singletons.sum()) / n_pixels if n_pixels else 0.0
+        if share >= SINGLETON_SHARE_WARN:
+            grouped = int((~singletons).sum())
+            warnings.warn(
+                f"{int(singletons.sum())} of {n_pixels} pixel(s) "
+                f"({share:.0%}) are alone in their {cluster_col!r} cluster, so the "
+                f"multiplier bootstrap draws them independently: only {grouped} "
+                f"cluster(s) actually group pixels. These standard errors are "
+                "site-clustered in name but close to pixel-level in fact. This is "
+                "what an unmatched control pool looks like -- controls belong to no "
+                "restoration site, so prepare_panel() gives each its own singleton. "
+                "Run the DiD on the matched panel (restrict_panel_to_matched), "
+                "where every control inherits its treated partner's site, or read "
+                "these SEs as the pixel-level ones they effectively are.",
+                stacklevel=3,
+            )
+
     if warn_few and n_clusters < FEW_CLUSTERS:
         warnings.warn(
             f"clustering SEs on {cluster_col!r} with only {n_clusters} cluster(s). "

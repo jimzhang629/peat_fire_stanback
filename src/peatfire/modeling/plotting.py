@@ -72,6 +72,7 @@ passed) so the caller can save it next to the other modeling figures.
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional, Sequence
 
 import geopandas as gpd
@@ -2205,6 +2206,12 @@ _LOWER_CANDIDATES = ("lower", "ci_lower", "lower_ci", "conf_low", "conf.low",
 _UPPER_CANDIDATES = ("upper", "ci_upper", "upper_ci", "conf_high", "conf.high",
                      "cband_upper", "upper_bound")
 _SE_CANDIDATES = ("std_error", "std.error", "standard_error", "se", "stderr")
+# Substrings that mark a band as the estimator's *simultaneous* (uniform) band
+# rather than a pointwise CI -- `differences` labels its columns
+# "simult. conf. band", R `did` calls the same thing a "cband". The two are not
+# interchangeable: a uniform band covers the whole path at once and is the wider
+# object, so the figure has to say which one it drew.
+_CBAND_HINTS = ("cband", "simult", "uniform")
 
 
 def _match_col(columns, candidates: Sequence[str]) -> Optional[str]:
@@ -2228,14 +2235,30 @@ def _tidy_event_study(
     upper_col,
     se_col,
     ci_level: float,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, str]:
     """Coerce a DiD event-study aggregate into ``event_time/estimate/lower/upper``.
 
     The output of :func:`peatfire.modeling.did.aggregate_att` (``kind="event"``)
     differs by backend, so this normalises it: it flattens a MultiIndex column
-    header, exposes an event-time held in the index, auto-detects the estimate /
-    CI / SE columns (override via the ``*_col`` arguments), and -- if only a
-    standard error is present -- builds a Wald CI at ``ci_level``.
+    header, exposes an event-time held in the index, and auto-detects the estimate
+    / CI / SE columns (override via the ``*_col`` arguments).
+
+    Interval choice. The backend's own ``lower``/``upper`` columns are used only
+    when they are actually **populated**. `differences` always emits them, but
+    they hold its *simultaneous* band, whose critical value comes from the same
+    multiplier bootstrap as the SEs and comes back all-NaN whenever that bootstrap
+    divides by a zero sigma -- routine on the site-clustered path, where a handful
+    of restoration sites is all the bootstrap has to resample. Preferring those
+    columns on presence alone silently produced NaN error bars (an event study
+    plotted with no visible uncertainty at all) while a finite ``std_error`` sat
+    unused in the next column. So an unusable band falls through to a Wald CI at
+    ``ci_level`` built from the standard error.
+
+    Returns
+    -------
+    (tidy, ci_label)
+        ``tidy`` has ``event_time/estimate/lower/upper``; ``ci_label`` names the
+        interval that was actually built, for the caller to put on the figure.
     """
     df = event_study.copy() if isinstance(event_study, pd.DataFrame) else pd.DataFrame(event_study)
 
@@ -2261,30 +2284,67 @@ def _tidy_event_study(
 
     lo = lower_col or _match_col(df.columns, _LOWER_CANDIDATES)
     hi = upper_col or _match_col(df.columns, _UPPER_CANDIDATES)
+    se_name = se_col or _match_col(df.columns, _SE_CANDIDATES)
     out = pd.DataFrame({
         "event_time": pd.to_numeric(df[et], errors="coerce"),
         "estimate": pd.to_numeric(df[est], errors="coerce"),
     })
+    out = out.dropna(subset=["event_time", "estimate"]).sort_values("event_time")
+
+    band = None
     if lo is not None and hi is not None:
-        out["lower"] = pd.to_numeric(df[lo], errors="coerce")
-        out["upper"] = pd.to_numeric(df[hi], errors="coerce")
-    else:
-        # No explicit band: build a Wald CI from the standard error.
-        se_name = se_col or _match_col(df.columns, _SE_CANDIDATES)
-        if se_name is None:
-            raise ValueError(
-                "event-study frame has neither lower/upper CI columns nor a "
-                f"standard-error column (columns: {list(df.columns)}). Pass "
-                "lower_col=/upper_col= or se_col= explicitly."
+        band_lo = pd.to_numeric(df[lo], errors="coerce").loc[out.index]
+        band_hi = pd.to_numeric(df[hi], errors="coerce").loc[out.index]
+        usable = band_lo.notna() & band_hi.notna()
+        # An all-or-nothing test on purpose: a band that covers only some event
+        # times would mix two interval types in one figure. Falling through to
+        # the SE keeps every point on the same footing.
+        if usable.all() and len(usable):
+            band = (band_lo, band_hi)
+        elif usable.any() or se_name is None:
+            warnings.warn(
+                f"the event-study frame's {lo!r}/{hi!r} band is missing for "
+                f"{int((~usable).sum())} of {len(usable)} event time(s) -- the "
+                "estimator's bootstrap could not produce it (few clusters is the "
+                "usual cause). "
+                + (
+                    f"Falling back to a Wald interval from {se_name!r}."
+                    if se_name is not None
+                    else "No standard-error column to fall back on, so those "
+                    "points are drawn without an interval."
+                ),
+                stacklevel=3,
             )
+
+    if band is not None:
+        out["lower"], out["upper"] = band
+        simultaneous = any(hint in str(lo).lower() for hint in _CBAND_HINTS)
+        ci_label = (
+            "simultaneous confidence band from the estimator"
+            if simultaneous
+            else "confidence band from the estimator"
+        )
+    elif se_name is not None:
+        # No usable band: build the pointwise Wald CI from the standard error.
         from statistics import NormalDist
 
         z = NormalDist().inv_cdf(1 - (1 - ci_level) / 2)
-        se = pd.to_numeric(df[se_name], errors="coerce")
+        se = pd.to_numeric(df[se_name], errors="coerce").loc[out.index]
         out["lower"] = out["estimate"] - z * se
         out["upper"] = out["estimate"] + z * se
+        ci_label = f"{int(round(ci_level * 100))}% pointwise CIs"
+    elif lo is not None and hi is not None:
+        out["lower"] = pd.to_numeric(df[lo], errors="coerce").loc[out.index]
+        out["upper"] = pd.to_numeric(df[hi], errors="coerce").loc[out.index]
+        ci_label = "confidence band from the estimator (incomplete)"
+    else:
+        raise ValueError(
+            "event-study frame has neither lower/upper CI columns nor a "
+            f"standard-error column (columns: {list(df.columns)}). Pass "
+            "lower_col=/upper_col= or se_col= explicitly."
+        )
 
-    return out.dropna(subset=["event_time", "estimate"]).sort_values("event_time")
+    return out, ci_label
 
 
 def plot_event_study(
@@ -2318,13 +2378,15 @@ def plot_event_study(
 
     Because the two DiD backends return differently-shaped aggregates, the frame is
     normalised by :func:`_tidy_event_study`; override the column mapping with the
-    ``*_col`` arguments if auto-detection misses. When only a standard error is
-    present, a Wald CI at ``ci_level`` is drawn.
+    ``*_col`` arguments if auto-detection misses. The estimator's own band is used
+    when it is populated, and a Wald CI at ``ci_level`` from the standard error
+    when it is not (see :func:`_tidy_event_study`). Whichever it drew is named in
+    the subtitle -- read it before comparing two of these figures.
 
     Returns the matplotlib Figure.
     """
     set_fire_style()
-    tidy = _tidy_event_study(
+    tidy, ci_label = _tidy_event_study(
         event_study, event_time_col, estimate_col, lower_col, upper_col, se_col, ci_level
     )
     if tidy.empty:
@@ -2356,9 +2418,22 @@ def plot_event_study(
     ):
         if grp.empty:
             continue
+        # A tiny interval is a *finding* (see the site-clustering note in
+        # peatfire.modeling.did), so draw it as a band as well as caps: hairline
+        # error bars on a 32-point path read as "no CI was plotted", which is the
+        # failure this function used to have for real.
+        drawn = grp.dropna(subset=["lower", "upper"])
+        if not drawn.empty:
+            ax.fill_between(drawn["event_time"], drawn["lower"], drawn["upper"],
+                            color=color, alpha=0.15, lw=0, zorder=1)
+        # Clip at zero: yerr must be non-negative, and an estimate outside its own
+        # band (a simultaneous band recentred by the backend) would otherwise
+        # raise rather than plot.
+        lower_err = (grp["estimate"] - grp["lower"]).clip(lower=0)
+        upper_err = (grp["upper"] - grp["estimate"]).clip(lower=0)
         ax.errorbar(
             grp["event_time"], grp["estimate"],
-            yerr=[grp["estimate"] - grp["lower"], grp["upper"] - grp["estimate"]],
+            yerr=[lower_err.fillna(0.0), upper_err.fillna(0.0)],
             fmt="o", color=color, ecolor=color, elinewidth=1.2, capsize=3,
             markersize=5, label=label, zorder=3,
         )
@@ -2373,7 +2448,7 @@ def plot_event_study(
     ax.set_ylabel(ylabel)
     ax.set_title(
         "Event study: burning vs time since restoration\n"
-        f"({int(round(ci_level * 100))}% CIs; pre-period points test parallel trends)"
+        f"({ci_label}; pre-period points test parallel trends)"
     )
     ax.legend(loc="best")
     return fig
