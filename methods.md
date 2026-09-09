@@ -400,6 +400,17 @@ All reported standard errors are therefore **clustered on the restoration site**
 (`site_id`). Matched control pixels **inherit their matched treated pixel's
 site**, so treated and control halves of a pair land in the same cluster.
 
+That inheritance is what makes site clustering bite, and it only exists **after
+matching**. A control pixel drawn from the unmatched candidate pool belongs to no
+restoration site, so `prepare_panel` can only give it a *singleton* cluster of its
+own — and a singleton carries no within-cluster correlation and receives its own
+bootstrap weight. Site-clustering the **unmatched** panel is therefore
+site-clustered in name and close to pixel-level in fact: the ~20k singleton
+controls swamp the six real site clusters. It also hides from the usual guardrail,
+since 20k singletons *count* as 20k clusters. `estimate_att` now warns when
+singletons dominate. Report the matched-panel numbers; read any unmatched-panel SE
+as the pixel-level one it effectively is.
+
 - In Route B this is the cluster-robust (sandwich) variance estimator, which
   leaves the coefficients unchanged and allows arbitrary correlation *within* a
   cluster while assuming independence *across* clusters.
