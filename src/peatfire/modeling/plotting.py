@@ -2383,6 +2383,14 @@ def plot_event_study(
     when it is not (see :func:`_tidy_event_study`). Whichever it drew is named in
     the subtitle -- read it before comparing two of these figures.
 
+    The interval is drawn as error bars on the estimated event times only, never as
+    a band spanning them. A bar too short to see is therefore a real reading: the
+    interval is tiny, which is itself a *finding* rather than a drawing failure (see
+    the site-clustering note in :mod:`peatfire.modeling.did` -- a simultaneous band
+    that thin usually means the SEs are closer to pixel-level than site-level). The
+    case where no interval could be built at all is caught upstream and says so in
+    the subtitle, via ``ci_label``.
+
     Returns the matplotlib Figure.
     """
     set_fire_style()
@@ -2410,7 +2418,13 @@ def plot_event_study(
         ax.axvspan(tidy["event_time"].min() - 0.5, onset,
                    color="0.85", alpha=0.35, zorder=0)
 
-    # Faint path through every point, then coloured points + CIs per period.
+    # Faint path through every point, then coloured points + CIs per period. The
+    # path is a reading aid and nothing more: a separate ATT is estimated at each
+    # integer event time and *nothing* is estimated between them, so the line is
+    # the only mark allowed to span two ticks. In particular the interval stays on
+    # the markers -- an interpolated CI band (fill_between across event_time) draws
+    # uncertainty for years the estimator never saw, and on a spiky path it hugs
+    # the connecting line closely enough to be mistaken for part of it.
     ax.plot(tidy["event_time"], tidy["estimate"], color="0.6", lw=0.8, zorder=2)
     for grp, color, label in (
         (pre, CONTROL_COLOR, "pre (parallel-trends check)"),
@@ -2418,14 +2432,6 @@ def plot_event_study(
     ):
         if grp.empty:
             continue
-        # A tiny interval is a *finding* (see the site-clustering note in
-        # peatfire.modeling.did), so draw it as a band as well as caps: hairline
-        # error bars on a 32-point path read as "no CI was plotted", which is the
-        # failure this function used to have for real.
-        drawn = grp.dropna(subset=["lower", "upper"])
-        if not drawn.empty:
-            ax.fill_between(drawn["event_time"], drawn["lower"], drawn["upper"],
-                            color=color, alpha=0.15, lw=0, zorder=1)
         # Clip at zero: yerr must be non-negative, and an estimate outside its own
         # band (a simultaneous band recentred by the backend) would otherwise
         # raise rather than plot.
