@@ -970,7 +970,7 @@ def plot_prognostic_trajectory(
 
     Plots the mean **per-year prognostic score** (``prefix<year>`` columns from
     :func:`add_prognostic_score_series`) for treated vs control pixels across the
-    study years, with an inter-quartile band. Because a *separate* model is fit each
+    study years. Because a *separate* model is fit each
     year, this curve shows how baseline fire risk **shifts over time** -- the spikes
     are the dry / El Nino years the single collapsed score cannot represent. If the
     per-year ``response`` is present, the observed never-treated burn rate is
@@ -1005,10 +1005,7 @@ def plot_prognostic_trajectory(
         if grp.empty:
             continue
         mean = [grp[col].mean() for col in cols]
-        q25 = [grp[col].quantile(0.25) for col in cols]
-        q75 = [grp[col].quantile(0.75) for col in cols]
         ax.plot(years, mean, "-o", color=color, label=f"{label} (mean prognostic)", zorder=3)
-        ax.fill_between(years, q25, q75, color=color, alpha=0.15, zorder=1)
 
     # observed never-treated burn rate per year, if the response is available
     if response and response in pixels.columns and year_col in pixels.columns:
@@ -1063,21 +1060,30 @@ def _restoration_year_per_row(
     return ry
 
 
-def _binomial_se(mean: np.ndarray, count: np.ndarray) -> np.ndarray:
-    """Standard error of a 0/1 rate: ``sqrt(p(1-p)/n)`` (NaN where ``n == 0``)."""
-    count = count.astype("float64")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        se = np.sqrt(mean * (1.0 - mean) / count)
-    return np.where(count > 0, se, np.nan)
-
-
+# No standard-error band is drawn on any descriptive burn rate in this module, and
+# the removed one was `sqrt(p(1-p)/n)`. Two reasons, either sufficient:
+#
+# 1. These rates are a *census*, not a sample. Every peatland pixel in the study
+#    area is observed, so "3.2% of pixels burned in 2015" is an exact property of
+#    the data with no sampling error to draw.
+# 2. Read instead as an estimate of some underlying fire propensity, the binomial
+#    SE is still the wrong number: it assumes n independent Bernoulli draws, and
+#    fire is about as spatially contagious as a process gets -- pixels burn in
+#    contiguous patches, so the effective sample size is nearer the number of
+#    distinct fires (tens) than the number of pixel-years (millions). The band it
+#    produced was too narrow by roughly the square root of that design effect,
+#    which is exactly the deflation `peatfire.modeling.did` refuses to report for
+#    the ATT (see its "Clustering the standard errors" note). Drawing it on the
+#    descriptive plots while refusing it on the estimates was incoherent.
+#
+# If a descriptive rate ever does need uncertainty, it has to come from resampling
+# whole sites or fire events, not from the pixel count.
 def plot_raw_burn_rate_by_year(
     frame: pd.DataFrame,
     response: str = "burned",
     year_col: str = "year",
     treated_col: str = "treated",
     restoration_yr_col: str = "End_Yr",
-    show_error: bool = True,
     ax: Optional[plt.Axes] = None,
 ):
     """Raw burn rate per **calendar year**, treated vs control -- the unadjusted signal.
@@ -1094,8 +1100,9 @@ def plot_raw_burn_rate_by_year(
     so a treated pixel counts as treated in every year, including the years before
     its site was restored -- this is a group-level rate over calendar time, not an
     event-time alignment (see :func:`plot_raw_burn_rate_by_event_time` for that).
-    With ``show_error`` a binomial standard-error band ``sqrt(p(1-p)/n)`` is shaded
-    around each line.
+
+    Each marker is one year's exact burned fraction and the line only connects
+    them; no uncertainty band is drawn (see the module note above this function).
 
     Returns the matplotlib Figure.
     """
@@ -1127,9 +1134,6 @@ def plot_raw_burn_rate_by_year(
         mean = stat["mean"].to_numpy(dtype="float64")
         ax.plot(years, mean, "-o", color=color, zorder=3,
                 label=f"{label} (n={len(g):,} pixel-years)")
-        if show_error:
-            se = _binomial_se(mean, stat["count"].to_numpy())
-            ax.fill_between(years, mean - se, mean + se, color=color, alpha=0.15, zorder=1)
 
     _set_year_ticks(ax, sorted(df[year_col].unique()))
     ax.set_xlabel("calendar year")
@@ -1149,7 +1153,6 @@ def plot_raw_burn_rate_by_event_time(
     treated_col: str = "treated",
     restoration_yr_col: str = "End_Yr",
     site_col: Optional[str] = None,
-    show_error: bool = True,
     ax: Optional[plt.Axes] = None,
 ):
     """Raw burn rate by **years after treatment** (event time) -- unadjusted.
@@ -1214,9 +1217,6 @@ def plot_raw_burn_rate_by_event_time(
         mean = stat["mean"].to_numpy(dtype="float64")
         ax.plot(et, mean, "-o", color=color, zorder=3,
                 label=f"{label} (n={len(g):,} pixel-years)")
-        if show_error:
-            se = _binomial_se(mean, stat["count"].to_numpy())
-            ax.fill_between(et, mean - se, mean + se, color=color, alpha=0.15, zorder=1)
         if grp_val is False:
             control_curve_drawn = True
 
@@ -1271,15 +1271,16 @@ def _burn_rate_by_bin(
     """Mean burn rate within equal-count (quantile) bins of a continuous covariate.
 
     Returns one row per bin with the bin's mean covariate value ``x`` (the plotting
-    abscissa), the mean ``rate`` of ``burned``, the pixel-year ``count``, and the
-    binomial ``se``. Quantile bins keep ``count`` roughly balanced so a sparse tail
-    does not produce a wild, single-pixel rate; degenerate edges (a covariate with
-    fewer distinct values than ``bins``) collapse via ``duplicates="drop"``.
+    abscissa), the mean ``rate`` of ``burned``, and the pixel-year ``count``.
+    Quantile bins keep ``count`` roughly balanced so a sparse tail does not produce
+    a wild, single-pixel rate; degenerate edges (a covariate with fewer distinct
+    values than ``bins``) collapse via ``duplicates="drop"``. ``count`` is the
+    honest guide to how much a bin is worth -- read it instead of the binomial
+    error band this used to carry.
     """
     q = pd.qcut(x, q=min(bins, np.unique(x).size), duplicates="drop")
     g = pd.DataFrame({"x": x, "burned": burned, "bin": q}).groupby("bin", observed=True)
     out = g.agg(x=("x", "mean"), rate=("burned", "mean"), count=("burned", "size"))
-    out["se"] = _binomial_se(out["rate"].to_numpy(), out["count"].to_numpy())
     return out.reset_index(drop=True)
 
 
@@ -1292,7 +1293,6 @@ def plot_covariate_vs_burn(
     by_treatment: bool = False,
     treated_col: str = "treated",
     restoration_yr_col: str = "End_Yr",
-    show_error: bool = True,
     max_categories: int = 25,
     ax: Optional[plt.Axes] = None,
 ):
@@ -1307,9 +1307,9 @@ def plot_covariate_vs_burn(
 
     * **continuous** covariate (drainage, elevation, climate, ...): equal-count
       (quantile) bins, drawn as a line of burn rate vs the bin's mean covariate
-      value, with a binomial standard-error band. A downward slope means fire gets
-      *less* likely as the covariate rises (e.g. better-drained/drier pixels burning
-      less), the raw shape the fitted coefficient summarises.
+      value. A downward slope means fire gets *less* likely as the covariate rises
+      (e.g. better-drained/drier pixels burning less), the raw shape the fitted
+      coefficient summarises.
     * **categorical** covariate (land cover, drainage class): one point (or bar) of
       burn rate per class, so you can read which classes carry the fire. Classes are
       ordered by burn rate and capped at ``max_categories``.
@@ -1369,10 +1369,6 @@ def plot_covariate_vs_burn(
             offset = (k - (len(groups) - 1) / 2) * width
             ax.bar(pos + offset, rate, width=width, color=color, alpha=0.75,
                    label=f"{label} (n={int(g.shape[0]):,})", zorder=2)
-            if show_error:
-                se = _binomial_se(rate, stat["size"].to_numpy())
-                ax.errorbar(pos + offset, rate, yerr=se, fmt="none",
-                            ecolor="0.3", elinewidth=0.8, capsize=2, zorder=3)
         ax.set_xticks(pos)
         ax.set_xticklabels([str(o) for o in order], rotation=45, ha="right")
     else:
@@ -1386,11 +1382,6 @@ def plot_covariate_vs_burn(
             )
             ax.plot(binned["x"], binned["rate"], "-o", color=color, zorder=3,
                     label=f"{label} (n={int(g.shape[0]):,} pixel-years)")
-            if show_error:
-                ax.fill_between(
-                    binned["x"], binned["rate"] - binned["se"],
-                    binned["rate"] + binned["se"], color=color, alpha=0.15, zorder=1,
-                )
 
     ax.set_xlabel(covariate)
     ax.set_ylabel(f"burn rate  mean({response})")
@@ -1560,7 +1551,6 @@ def _burned_area_table(
         .reset_index()
         .rename(columns={"_bin": "bin"})
     )
-    out["se"] = _binomial_se(out["rate"].to_numpy(), out["n_px"].to_numpy())
     year_total = out.groupby(year_col)["area_ha"].transform("sum")
     out["share"] = np.where(year_total > 0, 100.0 * out["area_ha"] / year_total, np.nan)
     if not is_cat:
@@ -1583,7 +1573,6 @@ def _pool_years(table: pd.DataFrame, is_cat: bool) -> pd.DataFrame:
         agg["_xw"] = ("_xw", "sum")
     out = table.groupby("bin", observed=True).agg(**agg).reset_index()
     out["rate"] = np.where(out["n_px"] > 0, out["burned_px"] / out["n_px"], np.nan)
-    out["se"] = _binomial_se(out["rate"].to_numpy(), out["n_px"].to_numpy())
     total = out["area_ha"].sum()
     out["share"] = 100.0 * out["area_ha"] / total if total > 0 else np.nan
     if not is_cat:
@@ -1710,10 +1699,6 @@ def plot_burned_area_vs_covariate(
     if show_pooled or not by_year:
         ax.plot(pooled["x"], pooled[metric], fmt, color="black", markersize=6,
                 lw=2.0, label="all years", zorder=3)
-        if metric == "rate":
-            ax.fill_between(pooled["x"], pooled["rate"] - pooled["se"],
-                            pooled["rate"] + pooled["se"], color="0.5",
-                            alpha=0.2, zorder=1)
 
     if is_cat:
         ax.set_xticks(range(len(order)))
