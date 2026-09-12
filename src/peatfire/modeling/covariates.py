@@ -308,6 +308,22 @@ TEMPORAL_COVARIATES: dict[str, CovariateSpec] = {
         source="scPDSI (Palmer drought index) annual mean, IDW-interpolated "
         "from GHCN precip + Hargreaves PET (modeling.climate / get_climate&soil_data.R).",
     ),
+    "gdd": CovariateSpec(
+        name="gdd",
+        role="continuous",
+        # /data/processed/climate/annual/gdd_<year>_nc.tif  (that year's accumulated
+        # growing degree days, base 5 C). The per-year counterpart of the static
+        # `gdd_normal` above: the normal is the stable site warmth the geographic
+        # match keys off, this is the individual year's warmth the outcome stage
+        # uses (a treated:gdd warm-year interaction, the warmth analogue of
+        # treated:pdsi). Built by climate.build_annual_climate with
+        # climate.DEFAULT_ANNUAL_GDD_ELEMENTS.
+        root_parts=("processed", "climate", "annual"),
+        glob="gdd_{year}_nc.tif",
+        native_res_m=300.0,
+        source="GHCN growing degree days (base 5C) annual total, IDW-interpolated "
+        "from clim_monthly.gpkg (get_climate&soil_data_updated.R).",
+    ),
 }
 
 
