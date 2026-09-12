@@ -20,10 +20,15 @@ Why *normals* (a long-run average), not the weather of a single year?
   A normal (e.g. the 1991-2020 mean) is the right *static* per-pixel covariate
   for that.
 * **Year-specific** weather (was 2023 a drought year here?) is a *temporal*
-  covariate: it belongs in the outcome / DiD stage as ``treated:precip`` or a
-  Castro-style per-year climate term, not in the geographic match. That path is
-  the documented TODO in ``matching.attach_covariates`` / ``frame.build_frame``;
-  this module deliberately produces the static normals the match needs today.
+  covariate: it belongs in the outcome / DiD stage as a ``treated:pdsi`` /
+  ``treated:gdd`` interaction or a Castro-style per-year climate term, not in the
+  geographic match -- matching on a year-varying value would pair pixels on
+  weather that partly *follows* treatment timing instead of on stable site
+  characteristics. Both products are built here:
+  :func:`build_climate_normals` for the static normals and
+  :func:`build_annual_climate` for one grid per calendar year, which
+  ``matching.attach_covariates`` / ``frame.build_frame`` attach as static and
+  temporal columns respectively.
 
 Interpolation is **inverse-distance weighting** (IDW): station coverage in the
 NC coastal plain is sparse and irregular, and IDW is the transparent, dependency
@@ -491,8 +496,9 @@ DEFAULT_CLIMATE_ELEMENTS: dict[str, dict] = {
 # over the duplicates that yields the year's GDD -- and the across-years mean gives
 # the growing-season-warmth normal. clim_monthly.gpkg has no STATION column, so
 # load_ghcn_stations falls back to a per-point id (its lowercase year column means
-# passing year_col="year"). A static site characteristic, so it registers in
-# covariates.COVARIATES (gdd_normal), not the per-year TEMPORAL_COVARIATES.
+# passing year_col="year"). This is the STATIC site characteristic, registered in
+# covariates.COVARIATES as `gdd_normal`; its per-year counterpart is
+# DEFAULT_ANNUAL_GDD_ELEMENTS below.
 DEFAULT_GDD_ELEMENTS: dict[str, dict] = {
     "gdd_normal": {"value_col": "totalGDD", "annual_reduce": "mean"},
 }
@@ -574,6 +580,30 @@ DEFAULT_ANNUAL_ELEMENTS: dict[str, dict] = {
 # `elements=` alongside a {"pdsi": pdsi_records} mapping.
 DEFAULT_PDSI_ELEMENTS: dict[str, dict] = {
     "pdsi": {"value_col": "scPDSI", "annual_reduce": "mean"},
+}
+
+
+# Growing degree days (base 5 C) **per calendar year** -- the temporal counterpart of
+# DEFAULT_GDD_ELEMENTS, off the same clim_monthly.gpkg export. Because that file
+# carries `totalGDD` as a per-station-year total repeated across the year's 12 month
+# rows, the within-year reduce is again a "mean" that is a no-op over the duplicates
+# and returns that year's accumulated GDD; build_annual_climate's single-year
+# baseline=(year, year) then skips the across-years average the normal takes. So the
+# same recipe shape yields the normal via build_climate_normals and the per-year
+# layer via build_annual_climate -- pass year_col="year" for either (clim_monthly's
+# year column is lowercase).
+#
+# This gives GDD the same static/temporal pair the other climate elements have, so
+# growing-season warmth can enter the geographic match as the stable site
+# characteristic (`gdd_normal`) *and* the outcome stage as year-specific warmth
+# (`gdd`, e.g. a treated:gdd warm-year interaction, the warmth analogue of
+# treated:pdsi). Caveat worth knowing: `totalGDD` is a cumulative sum over whatever
+# days a station actually reported, so a station-year with gaps under-counts.
+# Averaging across years damps that for the normal; a single year's grid inherits it
+# directly, which makes per-year GDD noisier than per-year scPDSI (a monthly index
+# averaged, not accumulated).
+DEFAULT_ANNUAL_GDD_ELEMENTS: dict[str, dict] = {
+    "gdd": {"value_col": "totalGDD", "annual_reduce": "mean"},
 }
 
 

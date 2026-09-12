@@ -156,6 +156,23 @@ per calendar year. scPDSI is centred so ~0 is normal and negative values are
 drought. Because it is self-calibrating, its long-run normal is ~0 everywhere —
 it exists *only* as a per-year covariate and has no static counterpart.
 
+`gdd` — that calendar year's **accumulated growing degree days** (base 5 °C),
+from the same per-station-year `totalGDD` column that `gdd_normal` is averaged
+from, interpolated to one raster per year. Unlike `pdsi`, GDD therefore exists as
+a static/temporal **pair**, and the two halves do different jobs: `gdd_normal` is
+the between-site contrast (which sites are warm) and enters the geographic match;
+`gdd` is the within-site contrast (which years were warm at a given site) and
+enters the outcome stage as `treated:gdd`, the warmth analogue of `treated:pdsi`.
+Adjusting for both in one fit is a between/within split, not a duplicated
+predictor.
+
+Per-year GDD is the noisier of the pair, for a reason that does not apply to
+scPDSI: `totalGDD` is a cumulative sum over whatever days a station actually
+reported, so a station-year with gaps under-counts. Averaging across years damps
+that for the normal, while a single year's grid inherits it directly (scPDSI, a
+monthly index averaged rather than accumulated, is not exposed this way). Read a
+single year's GDD surface accordingly.
+
 ### 5.3 Climate data construction
 
 Climate arrives as **station points, not rasters**: GHCN daily records for the
@@ -166,7 +183,16 @@ exports. Two products are derived from the same station records:
 - a **long-run normal** per station (1991–2020 baseline), interpolated to the
   grid as a *static* site characteristic (this is how `gdd_normal` is built); and
 - **one grid per calendar year**, as a *temporal* covariate (this is how `pdsi`
-  is built).
+  and `gdd` are built).
+
+The split is a design requirement, not a data limitation. **Matching** must key
+off stable, pre-treatment site characteristics: pairing pixels on a year-varying
+value would match them partly on weather that post-dates restoration, which is a
+post-treatment variable and biases the contrast. **The outcome stage** is where
+year-to-year weather belongs, as an interaction (`treated:pdsi`, `treated:gdd`)
+that asks whether the restoration effect is larger in drought or in warm years.
+Every element that supports both is therefore built both ways from the *same*
+station records, and each half is used only where it is valid.
 
 Interpolation is **inverse-distance weighting** onto the 300 m grid from the $k$
 nearest stations, with weights $w_i = d_i^{-p}$, $p = 2$, distances computed in
@@ -183,7 +209,9 @@ Per TNC's request (C. Chamberlain, 27 Aug 2026), the reported specification
 retains **exactly two climate predictors — scPDSI and growing-degree days — and
 drops all other temperature and precipitation metrics** (`precip_normal`,
 `tmax_normal`, `tmin_normal`, and the per-year `precip` / `tmax` / `tmin`
-layers). The rationale is that PDSI and GDD are the two mechanistically
+layers). Both retained predictors are carried in whichever form each stage
+admits (§5.3): the match uses `gdd_normal`; the outcome stage uses the per-year
+`pdsi` and `gdd`. The rationale is that PDSI and GDD are the two mechanistically
 interpretable summaries of the relevant climate signal — moisture deficit and
 growing-season warmth — whereas raw temperature and precipitation normals are
 strongly collinear with them and with each other, which inflates the effective
