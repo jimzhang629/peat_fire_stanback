@@ -15,14 +15,6 @@ notebooks/                                   analysis notebooks - see documentat
 outputs/memos/                               contains project outputs - see documentation below
 ```
 
-## Memos
-
-`outputs/memos/project_report.pdf` outlines the project overview, methods, results, and next steps.
-
-`outputs/memos/cat_kemen_meetings.pptx` is the raw meeting notes from jim+cat+kemen summer 2026 meetings
-
-`outputs/memos/fire_product_comparison.xlsx` is the theoretical comparison of several potential fire products for nc peat
-
 ## Notebooks
 `notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina. 
 
@@ -31,6 +23,14 @@ outputs/memos/                               contains project outputs - see docu
 `notebooks/validate_against_reference.ipynb` compares fire products against ground-truth reference data.  
 
 `notebooks/modeling.ipynb` runs the logistic regression and DiD modeling pipelines.
+
+## Memos
+
+`outputs/memos/project_report.pdf` outlines the project overview, methods, results, and next steps.
+
+`outputs/memos/cat_kemen_meetings.pptx` is the raw meeting notes from jim+cat+kemen summer 2026 meetings
+
+`outputs/memos/fire_product_comparison.xlsx` is the theoretical comparison of several potential fire products for nc peat
 
 ## Setup
 
