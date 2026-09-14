@@ -2459,6 +2459,7 @@ def plot_burn_rate_by_site(
     year. Read two things: whether the treated and control curves tracked each
     other BEFORE the line (parallel trends), and whether they separate after it.
     """
+    set_fire_style()
     df = panel.reset_index() if isinstance(panel.index, pd.MultiIndex) else panel.copy()
     for col in (response, year_col, site_col, cohort_col):
         if col not in df.columns:
@@ -2488,7 +2489,7 @@ def plot_burn_rate_by_site(
 
     for ax, site in zip(axs, sites):
         block = stat[stat[site_col] == site]
-        for flag, color, label in ((1, "tab:blue", "treated"), (0, "0.55", "control")):
+        for flag, color, label in ((1, TREATED_COLOR, "treated"), (0, CONTROL_COLOR, "control")):
             s = block[block["_restored"] == flag].sort_values(xcol)
             if s.empty:
                 continue

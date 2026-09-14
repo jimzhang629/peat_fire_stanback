@@ -1,5 +1,5 @@
 # nc-peatland-fire
-This project evaluates wildfire risk in North Carolina peatlands and quantifies how peatland restoration influences fire occurrence, severity, and associated greenhouse gas emissions.
+This project evaluates wildfire risk in North Carolina peatlands and quantifies how peatland restoration influences fire occurrence and burned area.
 
 ## Layout
 
@@ -10,16 +10,10 @@ notebooks/       analysis notebooks; see example.ipynb
 ```
 
 ## Documentation
-
-`methods.md` is the reportable write-up of the modeling approach: the estimand,
-the study frame and treatment definition, the fire products and covariates, the
-matched staggered difference-in-differences and matched-logistic specifications,
-the clustering and power/design diagnostics, and the design-decision log with
-assumptions and limitations. It is the document to hand to a collaborator who
-needs to know what was done and why, without reading the notebook.
-
-`notebooks/modeling.ipynb` is the executable version of the same pipeline; the
-design diagnostics behind the power argument live in `peatfire.modeling.power`.
+`notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina.  
+`notebooks/run_fire_comparison.ipynb` compares fire products against each other.  
+`notebooks/validate_against_reference.ipynb` compares fire products against ground-truth reference data.  
+`notebooks/modeling.ipynb` runs the logistic regression and DiD modeling pipelines as described in `outputs/memos/project_report.docx`.
 
 ## Setup
 
