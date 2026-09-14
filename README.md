@@ -4,6 +4,7 @@ This project evaluates wildfire risk in North Carolina peatlands and quantifies 
 ## Layout
 
 ```
+metadata/data_inventory.csv             contains metadata on all used data                           
 src/peatfire/                           importable `peatfire` package (data_loading helpers live here)
 src/get_climate&soil_data_updated.R     script from Catherine Chamberlain to download climate and soil data
 data/                                   raw/, interim/, processed/ (contents git-ignored)
