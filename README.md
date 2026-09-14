@@ -15,7 +15,7 @@ notebooks/                                   analysis notebooks - see documentat
 outputs/memos/                               contains project outputs - see documentation below
 ```
 
-## Documentation
+## Memos
 
 `outputs/memos/project_report.pdf` outlines the project overview, methods, results, and next steps.
 
@@ -23,6 +23,7 @@ outputs/memos/                               contains project outputs - see docu
 
 `outputs/memos/fire_product_comparison.xlsx` is the theoretical comparison of several potential fire products for nc peat
 
+## Notebooks
 `notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina. 
 
 `notebooks/run_fire_comparison.ipynb` compares fire products against each other.  
