@@ -10,13 +10,16 @@ notebooks/       analysis notebooks; see example.ipynb
 ```
 
 ## Documentation
+
+Please see `outputs/memos/project_report.docx` for project overview, methods, results, and next steps.
+
 `notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina. 
 
 `notebooks/run_fire_comparison.ipynb` compares fire products against each other.  
 
 `notebooks/validate_against_reference.ipynb` compares fire products against ground-truth reference data.  
 
-`notebooks/modeling.ipynb` runs the logistic regression and DiD modeling pipelines as described in `outputs/memos/project_report.docx`.
+`notebooks/modeling.ipynb` runs the logistic regression and DiD modeling pipelines.
 
 ## Setup
 
