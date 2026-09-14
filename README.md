@@ -10,16 +10,18 @@ metadata/data_inventory.csv                  contains metadata on all used data
 src/peatfire/                                importable `peatfire` package (data_loading helpers live here)
 src/get_climate&soil_data_updated.R          script from Catherine Chamberlain to download climate/soil data
 
-notebooks/                                   analysis notebooks - see documentation section below.
+notebooks/                                   analysis notebooks - see documentation below.
 
-outputs/memos/project_report.pdf             the project report document
-outputs/memos/cat_kemen_meetings.pptx        raw meeting notes from jim+cat+kemen summer 2026 meetings
-outputs/memos/fire_product_comparison.xlsx   comparison of several potential fire products for nc peat
+outputs/memos/                               contains project outputs - see documentation below
 ```
 
 ## Documentation
 
-Please see `outputs/memos/project_report.pdf` for project overview, methods, results, and next steps.
+`outputs/memos/project_report.pdf` outlines the project overview, methods, results, and next steps.
+
+`outputs/memos/cat_kemen_meetings.pptx` is the raw meeting notes from jim+cat+kemen summer 2026 meetings
+
+`outputs/memos/fire_product_comparison.xlsx` is the theoretical comparison of several potential fire products for nc peat
 
 `notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina. 
 
