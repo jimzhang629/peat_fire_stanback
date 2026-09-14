@@ -1,6 +1,6 @@
 *.nc
 *.png
-*.pdf
+*.docx
 *.jpg
 data/raw
 data/processed
