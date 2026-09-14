@@ -4,20 +4,22 @@ This project evaluates wildfire risk in North Carolina peatlands and quantifies 
 ## Layout
 
 ```
-data/                                   raw/, interim/, processed/ (contents git-ignored)
-metadata/data_inventory.csv             contains metadata on all used data
+data/                                        raw/, interim/, processed/ (contents git-ignored)
+metadata/data_inventory.csv                  contains metadata on all used data
                        
-src/peatfire/                           importable `peatfire` package (data_loading helpers live here)
-src/get_climate&soil_data_updated.R     script from Catherine Chamberlain to download climate and soil data
+src/peatfire/                                importable `peatfire` package (data_loading helpers live here)
+src/get_climate&soil_data_updated.R          script from Catherine Chamberlain to download climate/soil data
 
-notebooks/                              analysis notebooks - see documentation section below.
+notebooks/                                   analysis notebooks - see documentation section below.
 
-outputs/memos/                          where the project report document lives
+outputs/memos/project_report.pdf             the project report document
+outputs/memos/cat_kemen_meetings.pptx        raw meeting notes from jim+cat+kemen summer 2026 meetings
+outputs/memos/fire_product_comparison.xlsx   comparison of several potential fire products for nc peat
 ```
 
 ## Documentation
 
-Please see `outputs/memos/project_report.docx` for project overview, methods, results, and next steps.
+Please see `outputs/memos/project_report.pdf` for project overview, methods, results, and next steps.
 
 `notebooks/download_and_clip_data.ipynb` downloads raw data (e.g., fire products, covariates) and clips it to North Carolina. 
 
