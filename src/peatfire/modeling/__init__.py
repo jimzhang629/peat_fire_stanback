@@ -37,6 +37,7 @@ from .covariates import (
     temporal_covariate_on_grid,
 )
 from .frame import (
+    add_post_treatment_indicator,
     attach_fire_response,
     build_frame,
     build_mask_frame,
@@ -143,6 +144,7 @@ __all__ = [
     "load_covariate",
     "load_temporal_covariate",
     "temporal_covariate_on_grid",
+    "add_post_treatment_indicator",
     "attach_fire_response",
     "build_frame",
     "build_mask_frame",
