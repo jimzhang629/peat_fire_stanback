@@ -1136,6 +1136,7 @@ def plot_raw_burn_rate_by_year(
                 label=f"{label} (n={len(g):,} pixel-years)")
 
     _set_year_ticks(ax, sorted(df[year_col].unique()))
+    ax.set_ylim(bottom=0)  # a burn rate cannot be negative
     ax.set_xlabel("calendar year")
     ax.set_ylabel(f"raw burn rate  mean({response})")
     ax.set_title(
@@ -1230,6 +1231,7 @@ def plot_raw_burn_rate_by_event_time(
 
     if not aligned.empty:
         _set_year_ticks(ax, sorted(aligned["event_time"].unique()))
+    ax.set_ylim(bottom=0)  # a burn rate cannot be negative
     ax.set_xlabel("event time (years since restoration)")
     ax.set_ylabel(f"raw burn rate  mean({response})")
     ax.set_title(
@@ -2451,6 +2453,8 @@ def plot_burn_rate_by_site(
     site_col="site_id",
     cohort_col="g",
     x="event_time",           # "event_time" or "year"
+    order="cohort",           # "cohort", "burn", or "name"
+    share_y=True,
     figsize_per_axis=(9, 2.4),
 ):
     """Per-site burn probability over time: treated pixels vs their matched controls.
@@ -2458,6 +2462,22 @@ def plot_burn_rate_by_site(
     One row per restoration site. The dotted red line is that site's restoration
     year. Read two things: whether the treated and control curves tracked each
     other BEFORE the line (parallel trends), and whether they separate after it.
+
+    Each panel's pixel counts go in its own title, not the legend: the counts
+    differ per site, so a single legend entry would present one site's ``n`` as
+    though it applied to every panel.
+
+    ``order`` sets the panel sequence. ``"cohort"`` (default) is restoration year
+    then site name, matching the site table; ``"burn"`` is descending treated
+    burned pixel-years, which puts the site carrying the estimate first;
+    ``"name"`` is the plain alphabetical order.
+
+    With ``share_y`` (the default) every panel is drawn on one common
+    ``P(burn)`` scale, so panel heights are comparable across sites. Pass
+    ``share_y=False`` to let each panel fill its own range, which resolves detail
+    at the low-burn sites at the cost of cross-panel comparability. Either way
+    the axis starts at zero -- a burn probability cannot be negative, and an
+    all-zero site otherwise autoscales into negative territory.
     """
     set_fire_style()
     df = panel.reset_index() if isinstance(panel.index, pd.MultiIndex) else panel.copy()
@@ -2480,12 +2500,31 @@ def plot_burn_rate_by_site(
         .reset_index()
     )
 
+    # Pixels per site and group. ``size`` is the pixel count contributing to one
+    # (site, x, group) cell, so the max over x is that group's panel width -- it
+    # survives years where a pixel drops out of the product's coverage.
+    n_px = stat.groupby([site_col, "_restored"])["size"].max()
+    burned_treated = (
+        stat[stat["_restored"] == 1].groupby(site_col)["sum"].sum()
+    )
+
     sites = sorted(stat[site_col].unique())
+    if order == "cohort":
+        sites.sort(key=lambda s: (float(g_by_site.get(s, np.inf)), s))
+    elif order == "burn":
+        sites.sort(key=lambda s: (-float(burned_treated.get(s, 0.0)), s))
+    elif order != "name":
+        raise ValueError(f"order must be 'cohort', 'burn', or 'name'; got {order!r}")
+
     fig, axs = plt.subplots(
         len(sites), 1, sharex=True,
         figsize=(figsize_per_axis[0], figsize_per_axis[1] * len(sites)),
     )
     axs = np.atleast_1d(axs)
+
+    # One common ceiling so panel heights mean the same thing in every row. The
+    # floor is always zero; an all-zero site has no range of its own to scale to.
+    shared_top = float(stat["mean"].max()) if not stat.empty else 0.0
 
     for ax, site in zip(axs, sites):
         block = stat[stat[site_col] == site]
@@ -2493,13 +2532,21 @@ def plot_burn_rate_by_site(
             s = block[block["_restored"] == flag].sort_values(xcol)
             if s.empty:
                 continue
-            ax.plot(s[xcol], s["mean"], "-o", ms=3.5, color=color,
-                    label=f"{label} (n={int(s['size'].max())} px)")
+            ax.plot(s[xcol], s["mean"], "-o", ms=3.5, color=color, label=label)
         g = g_by_site.get(site)
         onset = -0.5 if x == "event_time" else float(g) - 0.5
         ax.axvline(onset, color="firebrick", lw=1.0, ls=":")
-        ax.set_title(f"{site}   (restored {int(g)})", fontsize=10, loc="left")
+
+        n_t = int(n_px.get((site, 1), 0))
+        n_c = int(n_px.get((site, 0), 0))
+        ax.set_title(
+            f"{site}   (restored {int(g)}; {n_t} treated px, {n_c} control px)",
+            fontsize=10, loc="left",
+        )
         ax.set_ylabel("P(burn)")
+
+        top = shared_top if share_y else float(block["mean"].max())
+        ax.set_ylim(0.0, top * 1.05 if top > 0 else 1.0)
 
     axs[0].legend(fontsize=8, frameon=False)
     axs[-1].set_xlabel("years since restoration" if x == "event_time" else "year")
