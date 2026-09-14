@@ -31,6 +31,7 @@ pictures in :mod:`peatfire.modeling.plotting`.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -285,6 +286,147 @@ def build_frame(
     frame = pd.concat(rows, ignore_index=True)
     # burned is NaN where the product had no coverage; drop those cell-years.
     return frame.dropna(subset=["burned"]).reset_index(drop=True)
+
+
+def add_post_treatment_indicator(
+    frame: pd.DataFrame,
+    units,
+    restoration_yr_col: str = "End_Yr",
+    unit_id_col: str = "unit_id",
+    treated_col: str = "treated",
+    year_col: str = "year",
+    post_col: str = "treated_post",
+) -> pd.DataFrame:
+    """Add a **per-year** post-restoration indicator to a :func:`build_frame` table.
+
+    ``build_frame`` burns the *static* ``treated`` label off ``units`` onto every
+    year of the panel, so a pixel inside a completed restoration site is
+    ``treated = 1`` in 2001 as well as in 2024. A levels fit on that column
+    therefore contrasts restored-site pixels with their matched controls **over
+    the whole record** -- a time-invariant site difference, not a before/after
+    restoration effect. With restorations landing in 2019-2026 and the MCD64A1
+    record starting in 2001, most ``treated = 1`` rows are *pre*-restoration, and
+    the site difference they carry is what the odds ratio on ``treated`` reports.
+
+    This attaches the timing ``build_frame`` drops: each unit's restoration year
+    (from ``units``, which :func:`peatfire.modeling.match_controls` carries
+    through) and
+
+    ``treated_post = 1`` iff the pixel is treated **and** ``year >=`` its site's
+    restoration year, else 0.
+
+    Controls -- which have no restoration year -- are 0 in every year, and a
+    treated pixel is 0 until its site is restored.
+
+    Which specification to fit
+    --------------------------
+    * ``burned ~ treated + treated_post + <covariates>`` -- the one to prefer, and
+      the logit analogue of the DiD in :mod:`peatfire.modeling.did`: ``treated``
+      absorbs the fixed restored-vs-control site difference and ``treated_post``
+      carries the change after restoration, so the two questions stop competing
+      for one coefficient.
+    * ``burned ~ treated_post + <covariates>`` -- the simple post-restoration
+      contrast. Cleaner to describe, but a site difference present before
+      restoration loads onto ``treated_post``.
+
+    In both, ``treated_post = 1`` rows are confined to the restoration years and
+    later while the reference group spans the whole record, so keep the per-year
+    weather columns (``pdsi``, ``gdd``) in the fit -- with the static ``treated``
+    they only added precision, here they adjust for the calendar years the two
+    arms no longer share. ``C(year)`` fixed effects control time far more fully;
+    with fire this rare, expect years without a single burn to trip the
+    quasi-separation guard in :func:`peatfire.modeling.fit_logit_clustered`.
+
+    Parameters
+    ----------
+    frame : DataFrame
+        Output of :func:`build_frame` (needs ``unit_id``, ``treated``, ``year``).
+    units : (Geo)DataFrame
+        The matched units ``build_frame`` consumed, carrying ``unit_id_col`` and
+        ``restoration_yr_col`` (NaN/absent on controls). ``match_controls`` keeps
+        the restoration year on its output, so this is the same object passed to
+        :func:`build_frame`.
+    restoration_yr_col : str
+        Restoration-year column on ``units`` ('End_Yr'). Copied onto the returned
+        frame, which also makes the event-time plots
+        (:func:`peatfire.modeling.plot_raw_burn_rate_by_event_time`) work off the
+        levels frame.
+    post_col : str
+        Name of the indicator to add ('treated_post').
+
+    Returns
+    -------
+    DataFrame
+        A copy of ``frame`` with ``restoration_yr_col`` and ``post_col`` added.
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing, if no unit carries a restoration year,
+        or if no pixel-year is post-restoration (an all-zero indicator cannot be
+        fit -- usually ``years`` ending before the first restoration).
+    """
+    for col, where in ((unit_id_col, frame), (treated_col, frame), (year_col, frame)):
+        if col not in where.columns:
+            raise ValueError(
+                f"frame is missing {col!r}; pass the table build_frame returned "
+                f"(it carries {unit_id_col!r}, {treated_col!r} and {year_col!r})."
+            )
+    for col in (unit_id_col, restoration_yr_col):
+        if col not in units.columns:
+            raise ValueError(
+                f"units is missing {col!r}. Pass the matched units build_frame "
+                f"consumed: match_controls keeps {restoration_yr_col!r} on its "
+                "output when the pixel panel carries it."
+            )
+
+    # unit_id -> restoration year. build_frame rasterizes the unit_id *values*, so
+    # they come back as floats; match dtypes on both sides of the lookup.
+    key = pd.to_numeric(units[unit_id_col], errors="coerce").astype("float64")
+    yr = pd.to_numeric(units[restoration_yr_col], errors="coerce")
+    yr_map = pd.Series(yr.to_numpy(), index=key.to_numpy())
+    yr_map = yr_map[~yr_map.index.duplicated(keep="first")]
+    if not yr_map.notna().any():
+        raise ValueError(
+            f"no unit carries a {restoration_yr_col!r}, so no pixel-year can be "
+            "post-restoration. Restoration years are dropped when the treated "
+            "pixels are built -- check that the panel passed to match_controls "
+            f"carried {restoration_yr_col!r}."
+        )
+
+    out = frame.copy()
+    restoration_year = out[unit_id_col].astype("float64").map(yr_map)
+    out[restoration_yr_col] = restoration_year
+
+    is_treated = out[treated_col] == 1
+    out[post_col] = (
+        is_treated & restoration_year.notna() & (out[year_col] >= restoration_year)
+    ).astype(int)
+
+    missing = int((is_treated & restoration_year.isna()).sum())
+    if missing:
+        warnings.warn(
+            f"{missing} treated pixel-year(s) have no {restoration_yr_col!r} and are "
+            f"coded {post_col} = 0 in every year (never post-restoration). They stay "
+            "in the reference group; drop them if that is not what you want.",
+            stacklevel=2,
+        )
+
+    n_post = int(out[post_col].sum())
+    if n_post == 0:
+        raise ValueError(
+            f"no pixel-year is post-restoration: {post_col} is 0 everywhere and "
+            "cannot be fit. The frame's years "
+            f"({int(out[year_col].min())}-{int(out[year_col].max())}) end before the "
+            f"first restoration year ({int(yr_map.min())}) -- rebuild the frame over "
+            "years that cover the restorations."
+        )
+    print(
+        f"[post] {post_col}: {n_post} post-restoration pixel-years of "
+        f"{int(is_treated.sum())} treated ({n_post / max(int(is_treated.sum()), 1):.1%}); "
+        f"restoration years {sorted(int(v) for v in yr_map.dropna().unique())}"
+    )
+    return out
 
 
 def build_mask_frame(
