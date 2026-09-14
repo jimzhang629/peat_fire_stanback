@@ -2528,7 +2528,7 @@ def plot_burn_rate_by_site(
 
     for ax, site in zip(axs, sites):
         block = stat[stat[site_col] == site]
-        for flag, color, label in ((1, TREATED_COLOR, "treated"), (0, CONTROL_COLOR, "control")):
+        for flag, color, label in ((1, "tab:blue", "treated"), (0, "0.55", "control")):
             s = block[block["_restored"] == flag].sort_values(xcol)
             if s.empty:
                 continue
